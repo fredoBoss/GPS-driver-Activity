@@ -1,0 +1,138 @@
+{% load static activity_extras %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ driver.name|default:name }} · Travel Record</title>
+  <link rel="stylesheet" href="{% static 'activity/style.css' %}">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="{% url 'activity:drivers_activity' %}">GPS Driver Log</a>
+    {% if log %}<span class="source">{{ log.path.name }} · saved {{ log.modified|date:"M j, Y g:i A" }}</span>{% endif %}
+  </div>
+</header>
+
+<main class="wrap">
+  <a class="back" href="{% url 'activity:drivers_activity' %}{% if filter_query %}?{{ filter_query }}{% endif %}">← All drivers</a>
+
+  {% if error %}
+    <h1>{{ name }}</h1>
+    <div class="alert"><strong>Cannot load the activity log.</strong> {{ error }}</div>
+  {% else %}
+    <h1>{{ driver.name }}
+      {% if not driver.in_lists %}<span class="pill pill-warn" title="This name is in the Activity Log but not on the Lists sheet.">Not in Lists</span>{% endif %}
+    </h1>
+    <p class="meta">
+      <span>Contact No.: <strong>{{ driver.contact|default:"—" }}</strong></span>
+      <span>Period: <strong>{% if start or end %}{{ start|date:"M j, Y"|default:"first trip" }} – {{ end|date:"M j, Y"|default:"latest trip" }}{% else %}All dates{% endif %}</strong></span>
+    </p>
+
+    {% if vehicles %}
+      <div class="vehicles" aria-label="Vehicles used">
+        {% for v in vehicles %}
+          <span class="vehicle"><strong>{{ v.plate }}</strong>{% if v.description %} · {{ v.description }}{% endif %}{% if v.device_id %} · SinoTrack ID {{ v.device_id }}{% endif %}</span>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form class="filters" method="get">
+      <label>From
+        <input type="date" name="start" value="{{ start|date:'Y-m-d' }}">
+      </label>
+      <label>To
+        <input type="date" name="end" value="{{ end|date:'Y-m-d' }}">
+      </label>
+      <button class="btn" type="submit">Apply</button>
+      <a class="btn-link" href="?">Clear</a>
+      <nav class="presets" aria-label="Date presets">
+        {% for p in presets %}<a href="?{{ p.query }}"{% if p.active %} class="active" aria-current="true"{% endif %}>{{ p.label }}</a>{% endfor %}
+      </nav>
+    </form>
+
+    {% for notice in notices %}<p class="notice">{{ notice }}</p>{% endfor %}
+    {% for warning in log.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
+
+    <section class="stats" aria-label="Totals for this period">
+      <div class="stat"><div class="label">Days with trips</div><div class="value">{{ days|length }}</div></div>
+      <div class="stat"><div class="label">Trip legs</div><div class="value">{{ driver.legs|length }}</div></div>
+      <div class="stat"><div class="label">Travel time</div><div class="value">{{ driver.travel|duration }}</div></div>
+      <div class="stat"><div class="label">Stay time</div><div class="value">{{ driver.stay|duration }}</div></div>
+      <div class="stat{% if driver.long_stays %} danger{% endif %}"><div class="label">Long stays</div><div class="value">{{ driver.long_stays }}</div></div>
+      <div class="stat"><div class="label">Distance (km)</div><div class="value">{{ driver.distance|number }}</div></div>
+      {% if log.has_park_count %}<div class="stat"><div class="label">Park count</div><div class="value">{{ driver.park_count|number }}</div></div>{% endif %}
+    </section>
+
+    {% for day in days %}
+      <section class="card" aria-label="{{ day.date|date:'l, M j, Y' }}">
+        <div class="day-head">
+          <div>
+            <h2>{{ day.date|date:"D, M j, Y" }}</h2>
+            {% for plate in day.plates %}<span class="pill pill-plate">{{ plate }}</span> {% endfor %}
+            {% if day.long_stays %}<span class="pill pill-danger">{{ day.long_stays }} long stay{{ day.long_stays|pluralize }}</span>{% endif %}
+            {% if day.check_orders %}<span class="pill pill-warn">Check order</span>{% endif %}
+          </div>
+          <div class="day-figures">
+            <span>First depart <b>{{ day.first_depart|clock }}</b></span>
+            <span>Last arrive <b>{{ day.last_arrive|clock }}</b></span>
+            <span>On road <b>{{ day.time_on_road|duration }}</b></span>
+            <span>Travel <b>{{ day.travel|duration }}</b></span>
+            <span>Stay <b>{{ day.stay|duration }}</b></span>
+            <span><b>{{ day.distance|number }}</b> km</span>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th class="num">#</th>
+                {% if day.plates|length > 1 %}<th>Plate No.</th>{% endif %}
+                <th>From (Origin)</th>
+                <th>Depart</th>
+                <th>To (Destination)</th>
+                <th>Arrive</th>
+                <th class="num">Travel Time</th>
+                <th class="num">Stay at Destination</th>
+                {% if log.has_park_count %}<th class="num">Park Count</th>{% endif %}
+                {% if log.has_purpose %}<th>Purpose</th>{% endif %}
+                <th class="num">Distance (km)</th>
+                <th>Remarks / DR No.</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for leg in day.legs %}
+                <tr class="{% if leg.long_stay %}long{% elif leg.check_order %}check{% endif %}">
+                  <td class="num muted" title="Excel row {{ leg.row }}">{{ forloop.counter }}</td>
+                  {% if day.plates|length > 1 %}<td>{{ leg.plate|default:"—" }}</td>{% endif %}
+                  <td>{{ leg.origin|default:"—" }}</td>
+                  <td class="time">{{ leg.depart|clock }}</td>
+                  <td>{{ leg.destination|default:"—" }}</td>
+                  <td class="time">{{ leg.arrive|clock }}</td>
+                  <td class="num">{{ leg.travel|duration }}</td>
+                  <td class="num">
+                    {% if leg.check_order %}<span class="pill pill-warn" title="The next row departs before this row arrives. Fix the times or the row order in Excel.">Check order</span>
+                    {% elif leg.stay is not None %}{{ leg.stay|duration }}{% if leg.long_stay %} <span class="pill pill-danger">LONG STAY</span>{% endif %}
+                    {% else %}<span class="muted">—</span>{% endif %}
+                  </td>
+                  {% if log.has_park_count %}<td class="num">{{ leg.park_count|number }}</td>{% endif %}
+                  {% if log.has_purpose %}<td>{{ leg.purpose|default:"—" }}</td>{% endif %}
+                  <td class="num">{{ leg.distance|number }}</td>
+                  <td>{{ leg.remarks|default:"—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    {% empty %}
+      <div class="empty">No trips recorded for {{ driver.name }}{% if start or end %} in this period{% endif %}.</div>
+    {% endfor %}
+
+    {% if days %}
+      <p class="footnote">Stay at Destination = next leg's depart time minus this leg's arrival (same date, driver and plate). Long stay = {{ log.threshold|duration }} or more. “(+1d)” = after midnight.</p>
+    {% endif %}
+  {% endif %}
+</main>
+</body>
+</html>

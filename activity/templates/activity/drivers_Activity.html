@@ -1,0 +1,110 @@
+{% load static activity_extras %}<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Driver Activity</title>
+  <link rel="stylesheet" href="{% static 'activity/style.css' %}">
+</head>
+<body>
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="{% url 'activity:drivers_activity' %}">GPS Driver Log</a>
+    <!-- {% if log %}<span class="source">{{ log.path.name }} · saved {{ log.modified|date:"M j, Y g:i A" }}</span>{% endif %} -->
+  </div>
+</header>
+
+<main class="wrap">
+  <h1>Driver Activity</h1>
+  <p class="lead">All drivers from the Lists sheet, with their trips from the Activity Log.</p>
+
+  <form class="filters" method="get">
+    <label>Driver
+      <input type="search" name="q" value="{{ q }}" placeholder="Search name">
+    </label>
+    <label>From
+      <input type="date" name="start" value="{{ start|date:'Y-m-d' }}">
+    </label>
+    <label>To
+      <input type="date" name="end" value="{{ end|date:'Y-m-d' }}">
+    </label>
+    <button class="btn" type="submit">Apply</button>
+    <a class="btn-link" href="{% url 'activity:drivers_activity' %}">Clear</a>
+    <nav class="presets" aria-label="Date presets">
+      {% for p in presets %}<a href="?{{ p.query }}"{% if p.active %} class="active" aria-current="true"{% endif %}>{{ p.label }}</a>{% endfor %}
+    </nav>
+  </form>
+
+  {% for notice in notices %}<p class="notice">{{ notice }}</p>{% endfor %}
+
+  {% if error %}
+    <div class="alert"><strong>Cannot load the activity log.</strong> {{ error }}</div>
+  {% else %}
+    {% for warning in log.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
+    {% if log.skipped_rows %}
+      <p class="notice">
+        {{ log.skipped_rows|length }} Activity Log row{{ log.skipped_rows|length|pluralize }} skipped because the Date or
+        Driver Name is blank or not valid: row{{ log.skipped_rows|length|pluralize }}
+        {{ log.skipped_rows|slice:":20"|join:", " }}{% if log.skipped_rows|length > 20 %}, …{% endif %}.
+      </p>
+    {% endif %}
+
+    <section class="stats" aria-label="Totals">
+      <div class="stat"><div class="label">Drivers with trips</div><div class="value">{{ active_drivers }} / {{ drivers|length }}</div></div>
+      <div class="stat"><div class="label">Trip legs</div><div class="value">{{ total_legs|number }}</div></div>
+      <div class="stat{% if total_long_stays %} danger{% endif %}"><div class="label">Long stays</div><div class="value">{{ total_long_stays }}</div></div>
+      <div class="stat"><div class="label">Distance (km)</div><div class="value">{{ total_distance|number }}</div></div>
+    </section>
+
+    {% if drivers %}
+      <div class="card">
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Driver Name</th>
+                <th>Contact No.</th>
+                <th>Plate No.</th>
+                <th class="num">Days</th>
+                <th class="num">Trip Legs</th>
+                <th class="num">Travel Time</th>
+                <th class="num">Stay Time</th>
+                <th class="num">Long Stays</th>
+                <th class="num">Distance (km)</th>
+                {% if log.has_park_count %}<th class="num">Park Count</th>{% endif %}
+                <th>Last Trip</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for driver in drivers %}
+                <tr{% if not driver.legs %} class="idle"{% endif %}>
+                  <td>
+                    <a class="driver-link" href="{% url 'activity:driver_travel_record' name=driver.name %}{% if filter_query %}?{{ filter_query }}{% endif %}">{{ driver.name }}</a>
+                    {% if not driver.in_lists %}<span class="pill pill-warn" title="This name is in the Activity Log but not on the Lists sheet.">Not in Lists</span>{% endif %}
+                  </td>
+                  <td>{{ driver.contact|default:"—" }}</td>
+                  <td>{% for plate in driver.plates %}<span class="pill pill-plate">{{ plate }}</span> {% empty %}—{% endfor %}</td>
+                  <td class="num">{{ driver.days|length }}</td>
+                  <td class="num">{{ driver.legs|length }}</td>
+                  <td class="num">{{ driver.travel|duration }}</td>
+                  <td class="num">{{ driver.stay|duration }}</td>
+                  <td class="num">{% if driver.long_stays %}<span class="pill pill-danger">{{ driver.long_stays }}</span>{% else %}0{% endif %}</td>
+                  <td class="num">{{ driver.distance|number }}</td>
+                  {% if log.has_park_count %}<td class="num">{{ driver.park_count|number }}</td>{% endif %}
+                  <td class="time">{{ driver.last_date|date:"M j, Y"|default:"—" }}</td>
+                </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <p class="footnote">Long stay = a stay of {{ log.threshold|duration }} or more at one place (set on the Lists sheet, cell B3). Click a driver to see their travel record.</p>
+    {% elif q %}
+      <div class="empty">No driver name matches “{{ q }}”.</div>
+    {% else %}
+      <div class="empty">No drivers yet. Type driver names on the <strong>Lists</strong> sheet of {{ log.path.name }}, save it, then refresh this page.</div>
+    {% endif %}
+  {% endif %}
+</main>
+</body>
+</html>
