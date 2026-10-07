@@ -15,7 +15,13 @@
 </header>
 
 <main class="wrap">
-  <h1>Driver Activity</h1>
+  <div class="page-head">
+    <h1>Driver Activity</h1>
+    {% if active_drivers %}
+      <a class="btn btn-secondary" href="{% url 'activity:export_all_travel_records' %}{% if export_query %}?{{ export_query }}{% endif %}"
+         title="Download the travel records of the drivers shown (the dates shown) as one Excel workbook, one sheet per driver">Export all to Excel</a>
+    {% endif %}
+  </div>
   <p class="lead">All drivers from the Lists sheet, with their trips from the Activity Log.</p>
 
   <form class="filters" method="get">
