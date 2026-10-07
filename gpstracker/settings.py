@@ -19,8 +19,9 @@ SECRET_KEY = os.environ.get(
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') != '0'
 ALLOWED_HOSTS = [h for h in os.environ.get('DJANGO_ALLOWED_HOSTS', '').split(',') if h]
 
-# The Excel workbook the pages read (Driver_Activity_Log.xlsx in the project root by default).
-ACTIVITY_LOG_PATH = Path(os.environ.get('ACTIVITY_LOG_PATH', BASE_DIR / 'Driver_Activity_Log.xlsx'))
+# The Excel workbook the pages read (GPS-RECORD/Driver_Activity_Log.xlsx by default, next to the
+# SinoTrack CSV exports). Imports save their backups in a "backups" folder beside it.
+ACTIVITY_LOG_PATH = Path(os.environ.get('ACTIVITY_LOG_PATH', BASE_DIR / 'GPS-RECORD' / 'Driver_Activity_Log.xlsx'))
 
 
 INSTALLED_APPS = [
