@@ -15,6 +15,16 @@ def duration(value):
 
 
 @register.filter
+def hms(value):
+    """timedelta -> "hh:mm:ss" (hours may pass 24), used for stays and the long-stay rule."""
+    if value is None or value == '':
+        return EMPTY
+    minutes, seconds = divmod(round(value.total_seconds()), 60)
+    hours, minutes = divmod(minutes, 60)
+    return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+
+
+@register.filter
 def clock(value):
     """Offset from midnight (timedelta) -> "8:05 AM", marking times that fall on a later day."""
     if value is None or value == '':
