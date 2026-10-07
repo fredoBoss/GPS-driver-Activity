@@ -12,12 +12,14 @@ same rules as the sheet, so the website and the workbook always agree:
 """
 import datetime as dt
 import io
+import re
 import threading
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from pathlib import Path
 
 from openpyxl import load_workbook
+from openpyxl.utils.datetime import from_excel
 
 LOG_SHEET = 'Activity Log'
 LISTS_SHEET = 'Lists'
@@ -33,10 +35,15 @@ LOG_HEADERS = {
     'driver': ('driver name', 'driver'),
     'plate': ('plate no.', 'plate no', 'plate number', 'plate'),
     'origin': ('from (origin)', 'from', 'origin'),
+    'origin_coordinates': ('from coordinates', 'start coordinates'),
     'depart': ('depart time', 'depart'),
     'destination': ('to (destination)', 'to', 'destination'),
+    'destination_coordinates': ('to coordinates', 'end coordinates'),
     'arrive': ('arrive time', 'arrive'),
     'park_count': ('park count',),
+    'park_time': ('park time',),
+    'park_address': ('park address',),
+    'park_coordinates': ('park coordinates',),
     'purpose': ('purpose',),
     'distance': ('distance (km)', 'distance'),
     'remarks': ('remarks / dr no.', 'remarks'),
@@ -64,6 +71,28 @@ class Vehicle:
 
 
 @dataclass
+class ParkStop:
+    """One stop from the Park Address / Park Coordinates cells (one line per stop)."""
+    address: str
+    coordinates: str = ''
+
+    @property
+    def maps_url(self):
+        return maps_url(self.coordinates)
+
+
+COORDINATES = re.compile(r'(?P<lat>-?\d{1,2}(?:\.\d+)?)\s*,\s*(?P<lon>-?\d{1,3}(?:\.\d+)?)')
+
+
+def maps_url(coordinates):
+    """Google Maps link for a "lat, lon" cell, or '' if it holds no coordinates."""
+    match = COORDINATES.search(coordinates or '')
+    if not match:
+        return ''
+    return f'https://www.google.com/maps/search/?api=1&query={match["lat"]},{match["lon"]}'
+
+
+@dataclass
 class Leg:
     """One Activity Log row: the vehicle leaves `origin` and reaches `destination`.
 
@@ -74,10 +103,15 @@ class Leg:
     driver: str
     plate: str = ''
     origin: str = ''
+    origin_coordinates: str = ''
     depart: dt.timedelta | None = None
     destination: str = ''
+    destination_coordinates: str = ''
     arrive: dt.timedelta | None = None
     park_count: float | str | None = None
+    park_time: dt.timedelta | None = None
+    park_addresses: list[str] = field(default_factory=list)
+    park_coordinates: list[str] = field(default_factory=list)
     purpose: str = ''
     distance: float | None = None
     remarks: str = ''
@@ -92,6 +126,23 @@ class Leg:
         if self.depart is None or self.travel is None:
             return None
         return self.depart + self.travel
+
+    @property
+    def origin_maps_url(self):
+        return maps_url(self.origin_coordinates)
+
+    @property
+    def destination_maps_url(self):
+        return maps_url(self.destination_coordinates)
+
+    @property
+    def parks(self):
+        """Stops merged from the SinoTrack Park Report: line N of the address cell pairs with
+        line N of the coordinates cell."""
+        count = max(len(self.park_addresses), len(self.park_coordinates))
+        return [ParkStop(self.park_addresses[i] if i < len(self.park_addresses) else '',
+                         self.park_coordinates[i] if i < len(self.park_coordinates) else '')
+                for i in range(count)]
 
 
 @dataclass
@@ -142,6 +193,10 @@ class Day:
     @cached_property
     def park_count(self):
         return _sum_numbers(leg.park_count for leg in self.legs)
+
+    @cached_property
+    def park_time(self):
+        return _sum_durations(leg.park_time for leg in self.legs)
 
 
 @dataclass
@@ -197,6 +252,10 @@ class Driver:
     def park_count(self):
         return _sum_numbers(leg.park_count for leg in self.legs)
 
+    @cached_property
+    def park_time(self):
+        return _sum_durations(leg.park_time for leg in self.legs)
+
 
 @dataclass
 class ActivityLog:
@@ -212,6 +271,18 @@ class ActivityLog:
     @property
     def has_park_count(self):
         return 'park_count' in self.columns
+
+    @property
+    def has_trip_coordinates(self):
+        return bool(self.columns & {'origin_coordinates', 'destination_coordinates'})
+
+    @property
+    def has_park_time(self):
+        return 'park_time' in self.columns
+
+    @property
+    def has_park_address(self):
+        return bool(self.columns & {'park_address', 'park_coordinates'})
 
     @property
     def has_purpose(self):
@@ -321,12 +392,12 @@ def _read_lists(ws, warnings):
                         'using 0:30.')
 
     header = rows[LISTS_HEADER_ROW - 1] if len(rows) >= LISTS_HEADER_ROW else ()
-    cols = _match_headers(header, LISTS_HEADERS)
+    cols = match_headers(header, LISTS_HEADERS)
     drivers, vehicles = [], {}
     for values in rows[LISTS_HEADER_ROW:]:
         def get(name):
             i = cols.get(name)
-            return _text(values[i]) if i is not None and i < len(values) else ''
+            return as_text(values[i]) if i is not None and i < len(values) else ''
         if get('driver'):
             drivers.append((get('driver'), get('contact')))
         if get('plate'):
@@ -337,7 +408,7 @@ def _read_lists(ws, warnings):
 
 def _read_legs(ws):
     rows = ws.iter_rows(min_row=LOG_HEADER_ROW, values_only=True)
-    cols = _match_headers(next(rows, ()), LOG_HEADERS)
+    cols = match_headers(next(rows, ()), LOG_HEADERS)
     missing = [name for name in REQUIRED_LOG_FIELDS if name not in cols]
     if missing:
         expected = ', '.join(f'"{LOG_HEADERS[name][0].title()}"' for name in missing)
@@ -347,9 +418,9 @@ def _read_legs(ws):
     legs, skipped = [], []
     for row_no, values in enumerate(rows, start=LOG_HEADER_ROW + 1):
         raw = {name: values[i] if i < len(values) else None for name, i in cols.items()}
-        if all(_is_blank(v) for v in raw.values()):
+        if all(is_blank(v) for v in raw.values()):
             continue
-        date, driver = _to_date(raw['date']), _text(raw['driver'])
+        date, driver = to_date(raw['date']), as_text(raw['driver'])
         if date is None or not driver:
             skipped.append(row_no)
             continue
@@ -359,20 +430,25 @@ def _read_legs(ws):
             row=row_no,
             date=date,
             driver=driver,
-            plate=_text(raw.get('plate')),
-            origin=_text(raw.get('origin')),
-            depart=_to_clock(raw['depart']),
-            destination=_text(raw.get('destination')),
-            arrive=_to_clock(raw['arrive']),
-            park_count=park_number if park_number is not None else (_text(park_count) or None),
-            purpose=_text(raw.get('purpose')),
+            plate=as_text(raw.get('plate')),
+            origin=as_text(raw.get('origin')),
+            origin_coordinates=as_text(raw.get('origin_coordinates')),
+            depart=to_clock(raw['depart']),
+            destination=as_text(raw.get('destination')),
+            destination_coordinates=as_text(raw.get('destination_coordinates')),
+            arrive=to_clock(raw['arrive']),
+            park_count=park_number if park_number is not None else (as_text(park_count) or None),
+            park_time=_to_duration(raw.get('park_time')),
+            park_addresses=_lines(raw.get('park_address')),
+            park_coordinates=_lines(raw.get('park_coordinates')),
+            purpose=as_text(raw.get('purpose')),
             distance=_to_number(raw.get('distance')),
-            remarks=_text(raw.get('remarks')),
+            remarks=as_text(raw.get('remarks')),
         ))
     return legs, cols, skipped
 
 
-def _match_headers(header, wanted):
+def match_headers(header, wanted):
     index = {' '.join(str(h).split()).casefold(): i
              for i, h in enumerate(header or ()) if h is not None}
     cols = {}
@@ -384,11 +460,11 @@ def _match_headers(header, wanted):
     return cols
 
 
-def _is_blank(value):
+def is_blank(value):
     return value is None or (isinstance(value, str) and not value.strip())
 
 
-def _text(value):
+def as_text(value):
     if value is None:
         return ''
     if isinstance(value, float) and value.is_integer():
@@ -409,11 +485,13 @@ def _to_number(value):
     return None
 
 
-def _to_date(value):
+def to_date(value):
     if isinstance(value, dt.datetime):
         return value.date()
     if isinstance(value, dt.date):
         return value
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 1:
+        return from_excel(int(value)).date()  # serial number, e.g. read from Excel as Value2
     if isinstance(value, str):
         try:
             return dt.date.fromisoformat(value.strip())
@@ -433,13 +511,14 @@ def _to_duration(value):
     if isinstance(value, dt.datetime):
         value = value.time()
     if isinstance(value, dt.time):
-        return dt.timedelta(hours=value.hour, minutes=value.minute, seconds=value.second)
+        return _round_seconds(dt.timedelta(hours=value.hour, minutes=value.minute,
+                                           seconds=value.second, microseconds=value.microsecond))
     if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
         return _round_seconds(dt.timedelta(days=value))
     return None
 
 
-def _to_clock(value):
+def to_clock(value):
     """A time of day as an offset from midnight, or None if blank or not a time."""
     if isinstance(value, str):
         text = ' '.join(value.upper().split())
@@ -453,6 +532,13 @@ def _to_clock(value):
             return None
     duration = _to_duration(value)
     return duration % DAY if duration is not None else None
+
+
+def _lines(value):
+    """Non-empty lines of a multi-line cell (Alt+Enter in Excel), each with tidy spacing."""
+    if is_blank(value):
+        return []
+    return [line for line in (as_text(part) for part in str(value).splitlines()) if line]
 
 
 def _distinct(values):
