@@ -1,4 +1,5 @@
-"""Excel export of one driver's travel record: the travel record page as a spreadsheet.
+"""Excel exports: one driver's travel record (the travel record page as a spreadsheet), or
+every driver's travel record with one sheet per driver, named after the driver.
 
 Values are real Excel dates, times and durations (not text), so the file can be sorted,
 filtered and summed. Totals rows are SUM/COUNTIF formulas; Excel calculates them on open.
@@ -129,27 +130,69 @@ def _day_columns(log):
 
 def travel_record_workbook(log, driver, start=None, end=None):
     """The driver's legs (already limited to start..end) as .xlsx bytes."""
-    wb = Workbook()
-    wb.calculation = CalcProperties(fullCalcOnLoad=True)
-    days = driver.days
-    period = _period(days, start, end)
-    plates = ', '.join(driver.plates) or '—'
-    notes = [f'Period: {period}    Plate No.: {plates}' + (f'    Contact No.: {driver.contact}' if driver.contact else ''),
-             f'From {log.path.name}, exported {dt.datetime.now():%b %d, %Y %I:%M %p}. '
-             f'Long stay = a stay of {_hms(log.threshold)} or more (Lists sheet, cell B3).']
+    wb = _workbook()
+    notes = _notes(log, driver, start, end)
 
     legs_ws = wb.active
     legs_ws.title = 'Travel Record'
-    rows = [(leg, n, leg) for day in days for n, leg in enumerate(day.legs, start=1)]
-    _write_sheet(legs_ws, f'Travel Record: {driver.name}', notes, _leg_columns(log), rows, freeze='D5')
+    _write_sheet(legs_ws, f'Travel Record: {driver.name}', notes, _leg_columns(log), _leg_rows(driver), freeze='D5')
 
     days_ws = wb.create_sheet('Daily Summary')
     _write_sheet(days_ws, f'Daily Summary: {driver.name}', notes, _day_columns(log),
-                 [(day, n, None) for n, day in enumerate(days, start=1)], freeze='B5')
+                 [(day, n, None) for n, day in enumerate(driver.days, start=1)], freeze='B5')
+    return _bytes(wb)
 
+
+def all_drivers_workbook(log, drivers, start=None, end=None):
+    """One sheet per driver, named after the driver, with their legs (already limited to start..end)."""
+    wb = _workbook()
+    wb.remove(wb.active)
+    taken = set()
+    for driver in drivers:
+        ws = wb.create_sheet(sheet_title(driver.name, taken))
+        _write_sheet(ws, f'Travel Record: {driver.name}', _notes(log, driver, start, end), _leg_columns(log),
+                     _leg_rows(driver), freeze='D5')
+    return _bytes(wb)
+
+
+def sheet_title(name, taken):
+    """`name` made into a valid, unused Excel sheet name; records it in `taken` (casefolded).
+
+    Excel sheet names are at most 31 characters, cannot contain \ / ? * [ ] :, cannot start
+    or end with an apostrophe, must differ ignoring case, and "History" is reserved.
+    """
+    base = re.sub(r'[\\/?*\[\]:]', '_', ' '.join(name.split())).strip("' ")[:31].strip("' ") or 'Driver'
+    title, n = base, 1
+    while title.casefold() in taken or title.casefold() == 'history':
+        n += 1
+        suffix = f' ({n})'
+        title = base[:31 - len(suffix)].rstrip("' ") + suffix
+    taken.add(title.casefold())
+    return title
+
+
+def _workbook():
+    wb = Workbook()
+    wb.calculation = CalcProperties(fullCalcOnLoad=True)
+    return wb
+
+
+def _bytes(wb):
     out = io.BytesIO()
     wb.save(out)
     return out.getvalue()
+
+
+def _notes(log, driver, start, end):
+    period = _period(driver.days, start, end)
+    plates = ', '.join(driver.plates) or '—'
+    return [f'Period: {period}    Plate No.: {plates}' + (f'    Contact No.: {driver.contact}' if driver.contact else ''),
+            f'From {log.path.name}, exported {dt.datetime.now():%b %d, %Y %I:%M %p}. '
+            f'Long stay = a stay of {_hms(log.threshold)} or more (Lists sheet, cell B3).']
+
+
+def _leg_rows(driver):
+    return [(leg, n, leg) for day in driver.days for n, leg in enumerate(day.legs, start=1)]
 
 
 def _write_sheet(ws, title, notes, columns, rows, freeze):
@@ -232,15 +275,29 @@ def _hms(td):
 
 def export_filename(driver_name, start=None, end=None, days=()):
     """e.g. "Travel record - Gonzaga - 2026-09-01 to 2026-09-03.xlsx"."""
-    safe_name = re.sub(r'[^\w .-]+', '_', driver_name).strip() or 'driver'
     first = start or (days[0].date if days else None)
     last = end or (days[-1].date if days else None)
+    return f'Travel record - {_safe(driver_name) or "driver"} - {_file_period(first, last)}.xlsx'
+
+
+def all_drivers_filename(drivers, start=None, end=None, q=''):
+    """e.g. "Travel records - All drivers - 2026-09-01 to 2026-09-30.xlsx"."""
+    dates = [day.date for driver in drivers for day in driver.days]
+    first = start or min(dates, default=None)
+    last = end or max(dates, default=None)
+    who = f'Drivers matching {_safe(q)}' if _safe(q) else 'All drivers'
+    return f'Travel records - {who} - {_file_period(first, last)}.xlsx'
+
+
+def _safe(text):
+    return re.sub(r'[^\w .-]+', '_', text).strip()
+
+
+def _file_period(first, last):
     if first and last:
-        period = first.isoformat() if first == last else f'{first.isoformat()} to {last.isoformat()}'
-    elif first:
-        period = f'from {first.isoformat()}'
-    elif last:
-        period = f'until {last.isoformat()}'
-    else:
-        period = 'all dates'
-    return f'Travel record - {safe_name} - {period}.xlsx'
+        return first.isoformat() if first == last else f'{first.isoformat()} to {last.isoformat()}'
+    if first:
+        return f'from {first.isoformat()}'
+    if last:
+        return f'until {last.isoformat()}'
+    return 'all dates'

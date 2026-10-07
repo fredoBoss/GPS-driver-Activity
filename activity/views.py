@@ -53,13 +53,19 @@ def _presets(start, end, extra=None):
     return presets
 
 
-def _filter_query(start, end):
+def _filter_query(start, end, q=''):
     params = {}
     if start:
         params['start'] = start.isoformat()
     if end:
         params['end'] = end.isoformat()
+    if q:
+        params['q'] = q
     return urlencode(params)
+
+
+def _matching(log, q):
+    return [d for d in log.drivers if q.casefold() in d.name.casefold()]
 
 
 def drivers_activity(request):
@@ -72,6 +78,8 @@ def drivers_activity(request):
         'notices': notices,
         'presets': _presets(start, end, {'q': q} if q else None),
         'filter_query': _filter_query(start, end),
+        # The export follows the search too: it holds the drivers shown on the page.
+        'export_query': _filter_query(start, end, q),
     }
     try:
         log = excel_log.load(settings.ACTIVITY_LOG_PATH)
@@ -80,7 +88,7 @@ def drivers_activity(request):
         return render(request, 'activity/drivers_Activity.html', context, status=503)
 
     # (driver limited to the selected dates, number of trips on any date)
-    rows = [(d.between(start, end), len(d.legs)) for d in log.drivers if q.casefold() in d.name.casefold()]
+    rows = [(d.between(start, end), len(d.legs)) for d in _matching(log, q)]
     drivers = [driver for driver, _ in rows]
     distances = [d.distance for d in drivers if d.distance is not None]
     context.update(
@@ -142,6 +150,28 @@ def export_travel_record(request, name):
     response = HttpResponse(export.travel_record_workbook(log, record, start, end), content_type=XLSX)
     response['Content-Disposition'] = content_disposition_header(
         as_attachment=True, filename=export.export_filename(record.name, start, end, record.days))
+    return response
+
+
+def export_all_travel_records(request):
+    """Every driver on the list page with trips in the selected dates: one sheet per driver."""
+    start, end, _ = _date_range(request)
+    q = request.GET.get('q', '').strip()
+    query = _filter_query(start, end, q)
+    back = reverse('activity:drivers_activity') + (f'?{query}' if query else '')
+    try:
+        log = excel_log.load(settings.ACTIVITY_LOG_PATH)
+    except excel_log.ActivityLogError as exc:
+        messages.error(request, f'Cannot export: {exc}')
+        return redirect(back)
+    # Drivers without trips in these dates are left out rather than given empty sheets.
+    records = [r for r in (d.between(start, end) for d in _matching(log, q)) if r.legs]
+    if not records:
+        messages.info(request, 'Nothing to export: no driver has trips on these dates.')
+        return redirect(back)
+    response = HttpResponse(export.all_drivers_workbook(log, records, start, end), content_type=XLSX)
+    response['Content-Disposition'] = content_disposition_header(
+        as_attachment=True, filename=export.all_drivers_filename(records, start, end, q))
     return response
 
 @require_POST
