@@ -21,9 +21,15 @@
     <h1>{{ name }}</h1>
     <div class="alert"><strong>Cannot load the activity log.</strong> {{ error }}</div>
   {% else %}
-    <h1>{{ driver.name }}
-      {% if not driver.in_lists %}<span class="pill pill-warn" title="This name is in the Activity Log but not on the Lists sheet.">Not in Lists</span>{% endif %}
-    </h1>
+    <div class="page-head">
+      <h1>{{ driver.name }}
+        {% if not driver.in_lists %}<span class="pill pill-warn" title="This name is in the Activity Log but not on the Lists sheet.">Not in Lists</span>{% endif %}
+      </h1>
+      {% if days %}
+        <a class="btn btn-secondary" href="{% url 'activity:export_travel_record' name=driver.name %}{% if filter_query %}?{{ filter_query }}{% endif %}"
+           title="Download this travel record (the dates shown) as an Excel workbook">Export to Excel</a>
+      {% endif %}
+    </div>
     <p class="meta">
       <span>Contact No.: <strong>{{ driver.contact|default:"—" }}</strong></span>
       <span>Period: <strong>{% if start or end %}{{ start|date:"M j, Y"|default:"first trip" }} – {{ end|date:"M j, Y"|default:"latest trip" }}{% else %}All dates{% endif %}</strong></span>
@@ -51,6 +57,7 @@
       </nav>
     </form>
 
+    {% for message in messages %}<p class="message message-{{ message.tags }}" role="status">{{ message }}</p>{% endfor %}
     {% for notice in notices %}<p class="notice">{{ notice }}</p>{% endfor %}
     {% for warning in log.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
 
@@ -58,10 +65,11 @@
       <div class="stat"><div class="label">Days with trips</div><div class="value">{{ days|length }}</div></div>
       <div class="stat"><div class="label">Trip legs</div><div class="value">{{ driver.legs|length }}</div></div>
       <div class="stat"><div class="label">Travel time</div><div class="value">{{ driver.travel|duration }}</div></div>
-      <div class="stat"><div class="label">Stay time</div><div class="value">{{ driver.stay|duration }}</div></div>
+      <div class="stat"><div class="label">Stay time</div><div class="value">{{ driver.stay|hms }}</div></div>
       <div class="stat{% if driver.long_stays %} danger{% endif %}"><div class="label">Long stays</div><div class="value">{{ driver.long_stays }}</div></div>
       <div class="stat"><div class="label">Distance (km)</div><div class="value">{{ driver.distance|number }}</div></div>
       {% if log.has_park_count %}<div class="stat"><div class="label">Park count</div><div class="value">{{ driver.park_count|number }}</div></div>{% endif %}
+      {% if log.has_park_time %}<div class="stat"><div class="label">Park time</div><div class="value">{{ driver.park_time|hms }}</div></div>{% endif %}
     </section>
 
     {% for day in days %}
@@ -78,7 +86,8 @@
             <span>Last arrive <b>{{ day.last_arrive|clock }}</b></span>
             <span>On road <b>{{ day.time_on_road|duration }}</b></span>
             <span>Travel <b>{{ day.travel|duration }}</b></span>
-            <span>Stay <b>{{ day.stay|duration }}</b></span>
+            <span>Stay <b>{{ day.stay|hms }}</b></span>
+            {% if log.has_park_time %}<span>Parked <b>{{ day.park_time|hms }}</b></span>{% endif %}
             <span><b>{{ day.distance|number }}</b> km</span>
           </div>
         </div>
@@ -95,6 +104,8 @@
                 <th class="num">Travel Time</th>
                 <th class="num">Stay at Destination</th>
                 {% if log.has_park_count %}<th class="num">Park Count</th>{% endif %}
+                {% if log.has_park_time %}<th class="num">Park Time</th>{% endif %}
+                {% if log.has_park_address %}<th>Park Address</th>{% endif %}
                 {% if log.has_purpose %}<th>Purpose</th>{% endif %}
                 <th class="num">Distance (km)</th>
                 <th>Remarks / DR No.</th>
@@ -105,17 +116,29 @@
                 <tr class="{% if leg.long_stay %}long{% elif leg.check_order %}check{% endif %}">
                   <td class="num muted" title="Excel row {{ leg.row }}">{{ forloop.counter }}</td>
                   {% if day.plates|length > 1 %}<td>{{ leg.plate|default:"—" }}</td>{% endif %}
-                  <td>{{ leg.origin|default:"—" }}</td>
+                  <td class="addr"><div>{{ leg.origin|default:"—" }}</div>{% if leg.origin_maps_url %}<a class="coords" href="{{ leg.origin_maps_url }}" target="_blank" rel="noopener" title="Open in Google Maps">{{ leg.origin_coordinates }}</a>{% endif %}</td>
                   <td class="time">{{ leg.depart|clock }}</td>
-                  <td>{{ leg.destination|default:"—" }}</td>
+                  <td class="addr"><div>{{ leg.destination|default:"—" }}</div>{% if leg.destination_maps_url %}<a class="coords" href="{{ leg.destination_maps_url }}" target="_blank" rel="noopener" title="Open in Google Maps">{{ leg.destination_coordinates }}</a>{% endif %}</td>
                   <td class="time">{{ leg.arrive|clock }}</td>
                   <td class="num">{{ leg.travel|duration }}</td>
                   <td class="num">
                     {% if leg.check_order %}<span class="pill pill-warn" title="The next row departs before this row arrives. Fix the times or the row order in Excel.">Check order</span>
-                    {% elif leg.stay is not None %}{{ leg.stay|duration }}{% if leg.long_stay %} <span class="pill pill-danger">LONG STAY</span>{% endif %}
+                    {% elif leg.stay is not None %}{{ leg.stay|hms }}{% if leg.long_stay %} <span class="pill pill-danger">LONG STAY</span>{% endif %}
                     {% else %}<span class="muted">—</span>{% endif %}
                   </td>
                   {% if log.has_park_count %}<td class="num">{{ leg.park_count|number }}</td>{% endif %}
+                  {% if log.has_park_time %}<td class="num">{{ leg.park_time|hms }}</td>{% endif %}
+                  {% if log.has_park_address %}
+                    <td class="parks">
+                      {% for park in leg.parks %}
+                        <div class="park">
+                          {% if park.address %}<div>{{ park.address }}</div>{% endif %}
+                          {% if park.maps_url %}<a class="coords" href="{{ park.maps_url }}" target="_blank" rel="noopener" title="Open in Google Maps">{{ park.coordinates }}</a>
+                          {% elif park.coordinates %}<span class="coords muted">{{ park.coordinates }}</span>{% endif %}
+                        </div>
+                      {% empty %}—{% endfor %}
+                    </td>
+                  {% endif %}
                   {% if log.has_purpose %}<td>{{ leg.purpose|default:"—" }}</td>{% endif %}
                   <td class="num">{{ leg.distance|number }}</td>
                   <td>{{ leg.remarks|default:"—" }}</td>
@@ -126,11 +149,14 @@
         </div>
       </section>
     {% empty %}
-      <div class="empty">No trips recorded for {{ driver.name }}{% if start or end %} in this period{% endif %}.</div>
+      <div class="empty">
+        No trips recorded for {{ driver.name }}{% if start or end %} in this period{% endif %}.
+        {% if all_legs %}{{ all_legs }} trip{{ all_legs|pluralize }} on other dates: <a href="?">show all dates</a>.{% endif %}
+      </div>
     {% endfor %}
 
     {% if days %}
-      <p class="footnote">Stay at Destination = next leg's depart time minus this leg's arrival (same date, driver and plate). Long stay = {{ log.threshold|duration }} or more. “(+1d)” = after midnight.</p>
+      <p class="footnote">Stay at Destination = next leg's depart time minus this leg's arrival (same date, driver and plate). Long stay = {{ log.threshold|hms }} or more. “(+1d)” = after midnight.{% if log.has_park_address %} Park columns come from the SinoTrack Park Report (stops at the destination and along the way).{% endif %}{% if log.has_trip_coordinates or log.has_park_address %} Click coordinates to open the spot in Google Maps.{% endif %}</p>
     {% endif %}
   {% endif %}
 </main>

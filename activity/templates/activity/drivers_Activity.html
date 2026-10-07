@@ -35,7 +35,44 @@
     </nav>
   </form>
 
+  <details class="import"{% if not drivers %} open{% endif %}>
+    <summary>Import SinoTrack report (CSV)</summary>
+    <form method="post" action="{% url 'activity:import_travel_report' %}" enctype="multipart/form-data">
+      {% csrf_token %}
+      <div class="import-fields">
+        <label>Travel Report or Park Report CSV
+          <input type="file" name="report" accept=".csv,text/csv" required>
+        </label>
+        <label>Driver name <span class="optional">(optional)</span>
+          <input type="text" name="driver" placeholder="From device name">
+        </label>
+        <label>Plate No. <span class="optional">(optional)</span>
+          <input type="text" name="plate" placeholder="From device name">
+        </label>
+        <button class="btn" type="submit">Copy into Excel log</button>
+      </div>
+      <p class="hint">
+        <strong>Travel Report:</strong> each trip is copied into the next empty row of the Activity Log sheet
+        (Date, Driver Name, Plate No., From, From Coordinates, Depart Time, To, To Coordinates, Arrive Time);
+        for trips already in the log only the blank cells are filled in. <strong>Park Report:</strong> each stop is merged into the trip row it belongs to (Park Count,
+        Park Time, Park Address, Park Coordinates), so import the Travel Report for those days first.
+        The driver and plate come from the SinoTrack device name (“T05_RJP 162 - Gonzaga” → plate RJP 162,
+        driver Gonzaga) unless you type them above. If the workbook is open in Excel, the cells are typed into
+        it there and Excel saves it (so finish editing any cell first). A backup copy is saved in the
+        <code>backups</code> folder each time.
+      </p>
+    </form>
+  </details>
+
+  {% for message in messages %}<p class="message message-{{ message.tags }}" role="status">{{ message }}</p>{% endfor %}
   {% for notice in notices %}<p class="notice">{{ notice }}</p>{% endfor %}
+  {% if start or end %}
+    <p class="filter-notice">
+      Showing trips from <strong>{{ start|date:"M j, Y"|default:"the first trip" }}</strong> to
+      <strong>{{ end|date:"M j, Y"|default:"the latest trip" }}</strong> only. Trips on other dates are not counted here.
+      <a href="?{{ presets.0.query }}">Show all dates</a>
+    </p>
+  {% endif %}
 
   {% if error %}
     <div class="alert"><strong>Cannot load the activity log.</strong> {{ error }}</div>
@@ -72,25 +109,28 @@
                 <th class="num">Long Stays</th>
                 <th class="num">Distance (km)</th>
                 {% if log.has_park_count %}<th class="num">Park Count</th>{% endif %}
+                {% if log.has_park_time %}<th class="num">Park Time</th>{% endif %}
                 <th>Last Trip</th>
               </tr>
             </thead>
             <tbody>
-              {% for driver in drivers %}
+              {% for driver, all_legs in rows %}
                 <tr{% if not driver.legs %} class="idle"{% endif %}>
                   <td>
                     <a class="driver-link" href="{% url 'activity:driver_travel_record' name=driver.name %}{% if filter_query %}?{{ filter_query }}{% endif %}">{{ driver.name }}</a>
                     {% if not driver.in_lists %}<span class="pill pill-warn" title="This name is in the Activity Log but not on the Lists sheet.">Not in Lists</span>{% endif %}
+                    {% if not driver.legs and all_legs %}<div class="other-dates">{{ all_legs }} trip{{ all_legs|pluralize }} on other dates</div>{% endif %}
                   </td>
                   <td>{{ driver.contact|default:"—" }}</td>
                   <td>{% for plate in driver.plates %}<span class="pill pill-plate">{{ plate }}</span> {% empty %}—{% endfor %}</td>
                   <td class="num">{{ driver.days|length }}</td>
                   <td class="num">{{ driver.legs|length }}</td>
                   <td class="num">{{ driver.travel|duration }}</td>
-                  <td class="num">{{ driver.stay|duration }}</td>
+                  <td class="num">{{ driver.stay|hms }}</td>
                   <td class="num">{% if driver.long_stays %}<span class="pill pill-danger">{{ driver.long_stays }}</span>{% else %}0{% endif %}</td>
                   <td class="num">{{ driver.distance|number }}</td>
                   {% if log.has_park_count %}<td class="num">{{ driver.park_count|number }}</td>{% endif %}
+                  {% if log.has_park_time %}<td class="num">{{ driver.park_time|hms }}</td>{% endif %}
                   <td class="time">{{ driver.last_date|date:"M j, Y"|default:"—" }}</td>
                 </tr>
               {% endfor %}
@@ -98,7 +138,7 @@
           </table>
         </div>
       </div>
-      <p class="footnote">Long stay = a stay of {{ log.threshold|duration }} or more at one place (set on the Lists sheet, cell B3). Click a driver to see their travel record.</p>
+      <p class="footnote">Long stay = a stay of {{ log.threshold|hms }} or more at one place (set on the Lists sheet, cell B3). Click a driver to see their travel record.</p>
     {% elif q %}
       <div class="empty">No driver name matches “{{ q }}”.</div>
     {% else %}
