@@ -62,8 +62,8 @@
     {% for warning in log.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
 
     <section class="stats" aria-label="Totals for this period">
-      <div class="stat"><div class="label">Days with trips</div><div class="value">{{ days|length }}</div></div>
-      <div class="stat"><div class="label">Trip legs</div><div class="value">{{ driver.legs|length }}</div></div>
+      <div class="stat"><div class="label">Days</div><div class="value">{{ days|length }}</div></div>
+      <div class="stat"><div class="label">Trip legs</div><div class="value">{{ driver.trips|length }}</div></div>
       <div class="stat"><div class="label">Travel time</div><div class="value">{{ driver.travel|duration }}</div></div>
       <div class="stat"><div class="label">Stay time</div><div class="value">{{ driver.stay|hms }}</div></div>
       <div class="stat{% if driver.long_stays %} danger{% endif %}"><div class="label">Long stays</div><div class="value">{{ driver.long_stays }}</div></div>
@@ -113,10 +113,10 @@
             </thead>
             <tbody>
               {% for leg in day.legs %}
-                <tr class="{% if leg.long_stay %}long{% elif leg.check_order %}check{% endif %}">
+                <tr class="{% if leg.long_stay %}long{% elif leg.check_order %}check{% elif leg.parking_only %}parking{% endif %}">
                   <td class="num muted" title="Excel row {{ leg.row }}">{{ forloop.counter }}</td>
                   {% if day.plates|length > 1 %}<td>{{ leg.plate|default:"—" }}</td>{% endif %}
-                  <td class="addr"><div>{{ leg.origin|default:"—" }}</div>{% if leg.origin_maps_url %}<a class="coords" href="{{ leg.origin_maps_url }}" target="_blank" rel="noopener" title="Open in Google Maps">{{ leg.origin_coordinates }}</a>{% endif %}</td>
+                  <td class="addr">{% if leg.parking_only %}<span class="pill pill-muted" title="Stops from the Park Report on a day with no trip in the log">Parking only</span>{% else %}<div>{{ leg.origin|default:"—" }}</div>{% endif %}{% if leg.origin_maps_url %}<a class="coords" href="{{ leg.origin_maps_url }}" target="_blank" rel="noopener" title="Open in Google Maps">{{ leg.origin_coordinates }}</a>{% endif %}</td>
                   <td class="time">{{ leg.depart|clock }}</td>
                   <td class="addr"><div>{{ leg.destination|default:"—" }}</div>{% if leg.destination_maps_url %}<a class="coords" href="{{ leg.destination_maps_url }}" target="_blank" rel="noopener" title="Open in Google Maps">{{ leg.destination_coordinates }}</a>{% endif %}</td>
                   <td class="time">{{ leg.arrive|clock }}</td>
