@@ -62,7 +62,8 @@ def _leg_columns(log):
         _Column('Date', 13, lambda leg, n: leg.date, FMT_DATE),
         _Column('#', 5, lambda leg, n: n),
         _Column('Plate No.', 11, lambda leg, n: leg.plate or None),
-        _Column('From (Origin)', 34, lambda leg, n: leg.origin or None, wrap=True),
+        _Column('From (Origin)', 34, lambda leg, n: leg.origin or ('Parking only' if leg.parking_only else None),
+                wrap=True),
     ]
     if has('origin_coordinates'):
         columns.append(_Column('From Coordinates', 22, lambda leg, n: leg.origin_coordinates or None,
@@ -112,7 +113,7 @@ def _day_columns(log):
     columns = [
         _Column('Date', 13, lambda day, n: day.date, FMT_DATE),
         _Column('Plate No.', 14, lambda day, n: ', '.join(day.plates) or None),
-        _Column('Trip Legs', 9, lambda day, n: len(day.legs), '0', total='SUM'),
+        _Column('Trip Legs', 9, lambda day, n: len(day.trips), '0', total='SUM'),
         _Column('First Depart', 12, lambda day, n: _time(day.first_depart), FMT_TIME),
         _Column('Last Arrive', 16, lambda day, n: last_arrive(day), FMT_TIME),
         _Column('Time on Road', 11, lambda day, n: day.time_on_road, FMT_HM, total='SUM'),
