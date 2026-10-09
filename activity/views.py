@@ -175,47 +175,79 @@ def export_all_travel_records(request):
 
 @require_POST
 def import_travel_report(request):
-    """Copy an uploaded SinoTrack Travel Report or Park Report CSV into the Activity Log sheet."""
-    back = redirect('activity:drivers_activity')
-    upload = request.FILES.get('report')
-    if upload is None:
-        messages.error(request, 'Choose a SinoTrack Travel Report or Park Report CSV file to import.')
-        return back
-    if upload.size > MAX_UPLOAD_BYTES:
-        messages.error(request, f'{upload.name} is too large to be a SinoTrack report (over 10 MB).')
-        return back
+    """Copy uploaded SinoTrack Travel Report and Park Report CSVs into the Activity Log sheet.
 
-    data = upload.read()
+    Several files can be uploaded at once, in any order and mixing both kinds. The trips of all
+    Travel Reports are imported together first, then the stops of all Park Reports are merged
+    together, so stops land on trips from the same upload and a stop that appears in two
+    overlapping exports is counted once.
+    """
+    back = redirect('activity:drivers_activity')
+    uploads = request.FILES.getlist('report')
+    if not uploads:
+        messages.error(request, 'Choose one or more SinoTrack Travel Report or Park Report CSV files to import.')
+        return back
     driver = request.POST.get('driver', '').strip() or None
     plate = request.POST.get('plate', '').strip() or None
-    try:
-        kind = sinotrack.detect_report(data)
-        if kind == 'park':
-            parks, invalid_rows = sinotrack.parse_park_report(data)
-            result = log_writer.merge_parks(settings.ACTIVITY_LOG_PATH, parks, plate=plate, driver=driver)
-            changed = _report_park_merge(request, upload.name, result)
-        elif kind == 'travel':
-            trips, invalid_rows = sinotrack.parse_travel_report(data)
-            result = log_writer.import_trips(settings.ACTIVITY_LOG_PATH, trips, driver=driver, plate=plate)
-            changed = _report_trip_import(request, upload.name, result)
-        else:
-            raise sinotrack.ReportError('This is not a SinoTrack Travel Report or Park Report CSV.')
-    except (sinotrack.ReportError, excel_log.ActivityLogError) as exc:
-        messages.error(request, f'{upload.name}: {exc}')
-        return back
 
-    if invalid_rows:
-        messages.warning(request, f'{len(invalid_rows)} row(s) in {upload.name} could not be read '
-                                  f'and were skipped (CSV rows {", ".join(map(str, invalid_rows[:20]))}).')
-    for warning in result.warnings:
-        messages.warning(request, warning)
+    found = {'travel': ([], {}), 'park': ([], {})}  # kind -> (file names, {(device, start, end): item})
+    for upload in uploads:
+        if upload.size > MAX_UPLOAD_BYTES:
+            messages.error(request, f'{upload.name} is too large to be a SinoTrack report (over 10 MB); '
+                                    'it was not imported.')
+            continue
+        data = upload.read()
+        try:
+            kind = sinotrack.detect_report(data)
+            if kind == 'park':
+                items, invalid_rows = sinotrack.parse_park_report(data)
+            elif kind == 'travel':
+                items, invalid_rows = sinotrack.parse_travel_report(data)
+            else:
+                raise sinotrack.ReportError('This is not a SinoTrack Travel Report or Park Report CSV.')
+        except sinotrack.ReportError as exc:
+            messages.error(request, f'{upload.name}: {exc}' + (' It was not imported.' if len(uploads) > 1 else ''))
+            continue
+        if invalid_rows:
+            messages.warning(request, f'{len(invalid_rows)} row(s) in {upload.name} could not be read '
+                                      f'and were skipped (CSV rows {", ".join(map(str, invalid_rows[:20]))}).')
+        names, items_by_key = found[kind]
+        names.append(upload.name)
+        for item in items:
+            items_by_key.setdefault((item.device, item.start, item.end), item)
 
-    if not changed:
-        return back
-    # No date filter here: limiting the pages to the uploaded file's dates hid every other trip.
-    if len(result.drivers) == 1:
-        return redirect('activity:driver_travel_record', name=result.drivers[0])
+    changed = []
+    for kind, write, report in (
+            ('travel', lambda items: log_writer.import_trips(
+                settings.ACTIVITY_LOG_PATH, items, driver=driver, plate=plate), _report_trip_import),
+            ('park', lambda items: log_writer.merge_parks(
+                settings.ACTIVITY_LOG_PATH, items, plate=plate, driver=driver), _report_park_merge)):
+        names, items_by_key = found[kind]
+        if not items_by_key:
+            continue
+        files = _files_text(names)
+        try:
+            result = write(sorted(items_by_key.values(), key=lambda item: (item.device, item.start)))
+        except excel_log.ActivityLogError as exc:
+            messages.error(request, f'{files}: {exc}')
+            break  # e.g. the workbook is locked: the Park Reports would fail the same way
+        if report(request, files, result):
+            changed.append(result)
+        for warning in result.warnings:
+            messages.warning(request, warning)
+
+    # No date filter here: limiting the pages to the uploaded files' dates hid every other trip.
+    drivers = {name for result in changed for name in result.drivers}
+    if len(drivers) == 1:
+        return redirect('activity:driver_travel_record', name=drivers.pop())
     return back
+
+
+def _files_text(names):
+    if len(names) == 1:
+        return names[0]
+    shown = ', '.join(names[:3]) + (f' and {len(names) - 3} more' if len(names) > 3 else '')
+    return f'{len(names)} files ({shown})'
 
 
 def _dates_text(start, end):

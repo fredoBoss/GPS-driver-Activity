@@ -46,8 +46,8 @@
     <form method="post" action="{% url 'activity:import_travel_report' %}" enctype="multipart/form-data">
       {% csrf_token %}
       <div class="import-fields">
-        <label>Travel Report or Park Report CSV
-          <input type="file" name="report" accept=".csv,text/csv" required>
+        <label>Travel Report or Park Report CSV files
+          <input type="file" name="report" accept=".csv,text/csv" multiple required>
         </label>
         <label>Driver name <span class="optional">(optional)</span>
           <input type="text" name="driver" placeholder="From device name">
@@ -58,6 +58,9 @@
         <button class="btn" type="submit">Copy into Excel log</button>
       </div>
       <p class="hint">
+        <strong>Several files at once:</strong> hold Ctrl (or Shift) while picking files, or drag them onto
+        the button. Travel Reports and Park Reports can be mixed: all trips are copied first, then all stops.
+        Leave Driver name and Plate No. blank when the files are for different drivers.
         <strong>Travel Report:</strong> each trip is copied into the next empty row of the Activity Log sheet
         (Date, Driver Name, Plate No., From, From Coordinates, Depart Time, To, To Coordinates, Arrive Time);
         for trips already in the log only the blank cells are filled in. <strong>Park Report:</strong> each stop is merged into the trip row it belongs to (Park Count,
