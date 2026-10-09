@@ -128,6 +128,14 @@ class Leg:
         return self.depart + self.travel
 
     @property
+    def parking_only(self):
+        """A row the Park Report import adds for stops on a day without trips: park cells only,
+        no depart/arrive time and no From/To."""
+        return (self.depart is None and self.arrive is None and not self.origin and not self.destination
+                and any((self.park_count not in (None, ''), self.park_time, self.park_addresses,
+                         self.park_coordinates)))
+
+    @property
     def origin_maps_url(self):
         return maps_url(self.origin_coordinates)
 
@@ -154,6 +162,11 @@ class Day:
     @cached_property
     def plates(self):
         return _distinct(leg.plate for leg in self.legs)
+
+    @cached_property
+    def trips(self):
+        """The legs that are trips, i.e. not parking-only rows."""
+        return [leg for leg in self.legs if not leg.parking_only]
 
     @cached_property
     def first_depart(self):
@@ -223,6 +236,11 @@ class Driver:
     @cached_property
     def plates(self):
         return _distinct(leg.plate for leg in self.legs)
+
+    @cached_property
+    def trips(self):
+        """The legs that are trips, i.e. not parking-only rows."""
+        return [leg for leg in self.legs if not leg.parking_only]
 
     @cached_property
     def last_date(self):
