@@ -65,7 +65,8 @@ def _filter_query(start, end, q=''):
 
 
 def _matching(log, q):
-    return [d for d in log.drivers if q.casefold() in d.name.casefold()]
+    """Drivers whose name contains `q`, A to Z (the list page and the "Export all" sheets)."""
+    return sorted((d for d in log.drivers if q.casefold() in d.name.casefold()), key=lambda d: d.name.casefold())
 
 
 def drivers_activity(request):
