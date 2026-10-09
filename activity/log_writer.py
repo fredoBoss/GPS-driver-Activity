@@ -5,8 +5,11 @@
   in the log (same date, plate, depart and arrive time) is not added again; only its blank cells
   are filled in, so importing a file twice is harmless and new columns get completed.
 * Park Report (`merge_parks`): each stop is merged into the existing trip row it belongs to,
-  filling Park Count, Park Time, Park Address and Park Coordinates. Re-merging rewrites the
-  same values.
+  filling Park Count, Park Time, Park Address and Park Coordinates. Stops with no trip to go to
+  (a day without trips) are still imported, onto one parking-only row per day and plate: Date,
+  Driver Name, Plate No. and the park cells, with no times or places. Re-merging rewrites the
+  same values; once that day's trips are in the log, re-merging moves the stops onto them and
+  clears the parking-only row.
 
 A backup copy of the workbook is saved before anything is written. If the workbook is closed
 it is edited with openpyxl. If Excel has it open (Windows then refuses other writers), the same
@@ -59,13 +62,16 @@ class ImportResult:
 @dataclass
 class ParkMergeResult:
     parks: int = 0
-    matched: int = 0
-    rows: list[int] = field(default_factory=list)
+    matched: int = 0                                 # stops merged into trip rows
+    rows: list[int] = field(default_factory=list)    # those trip rows
+    parking_only: int = 0                            # stops on days without trips
+    parking_only_rows: list[int] = field(default_factory=list)  # their rows (new or rewritten)
+    parking_only_dates: list[dt.date] = field(default_factory=list)
+    added: int = 0                                   # new parking-only rows
+    cleared_rows: list[int] = field(default_factory=list)  # parking-only rows whose stops now go to trips
     drivers: list[str] = field(default_factory=list)
     start: dt.date | None = None
     end: dt.date | None = None
-    unmatched_dates: list[dt.date] = field(default_factory=list)
-    unmatched: int = 0
     backup: Path | None = None
     warnings: list[str] = field(default_factory=list)
     via_excel: bool = False
@@ -104,9 +110,10 @@ def import_trips(path, trips, driver=None, plate=None, backup_dir=None):
     return _apply(path, backup_dir, lambda snapshot: _plan_trips(snapshot, trips, driver, plate, Path(path)))
 
 
-def merge_parks(path, parks, plate=None, backup_dir=None):
-    """Merge Park Report `parks` into the trip rows they belong to. `plate` overrides the device name."""
-    return _apply(path, backup_dir, lambda snapshot: _plan_parks(snapshot, parks, plate, Path(path)))
+def merge_parks(path, parks, plate=None, driver=None, backup_dir=None):
+    """Merge Park Report `parks` into the trip rows they belong to; stops on days without trips get
+    parking-only rows. `plate` / `driver` override the device name."""
+    return _apply(path, backup_dir, lambda snapshot: _plan_parks(snapshot, parks, plate, driver, Path(path)))
 
 
 def _apply(path, backup_dir, planner):
@@ -215,22 +222,46 @@ class _LegSpan:
     arrive: dt.datetime
 
 
-def _plan_parks(snapshot, parks, plate, path):
+def _plan_parks(snapshot, parks, plate, driver, path):
     """Each stop goes to the trip row with the latest departure at or before the stop's start, so a
     stop at the destination and a stop during the drive both land on that trip, and so do overnight
     stops before the next trip. The stop must start on that trip's day (or the day it arrived, or the
-    next trip's day when that is the following day); stops on days with no trips stay unmatched,
-    because the Travel Report for those days has not been imported."""
-    cols = _log_columns(snapshot, path, ('date', 'plate', 'depart') + PARK_FIELDS)
+    next trip's day when that is the following day).
+
+    The other stops (days with no trips, or before the vehicle's first trip) are not dropped: each
+    day's go on one parking-only row for that date and plate. An existing parking-only row for the
+    same date and plate is rewritten instead of adding another, and one whose stops now belong to
+    trips (the Travel Report for that day was imported since) is cleared."""
+    cols = _log_columns(snapshot, path, ('date', 'driver', 'plate', 'depart') + PARK_FIELDS)
 
     def get(values, name):
         i = cols.get(name)
         return values[i] if i is not None and i < len(values) else None
 
+    # Spellings of driver names already used, so a parking-only row says "CAPOY", not "Capoy".
+    known_drivers = {}
+    lists_cols = excel_log.match_headers(snapshot.lists_header, excel_log.LISTS_HEADERS)
+    if 'driver' in lists_cols:
+        for values in snapshot.lists_rows:
+            name = excel_log.as_text(values[lists_cols['driver']] if lists_cols['driver'] < len(values) else None)
+            if name:
+                known_drivers.setdefault(name.casefold(), name)
+
     legs_by_plate = defaultdict(list)
+    parking_rows = {}                     # (date, plate) -> (row, values) of parking-only rows in the log
+    drivers_by_plate = defaultdict(list)  # plate -> [(date, driver)] of the rows in the log
     for row_no, values in enumerate(snapshot.log_rows, start=FIRST_ROW):
         date, depart = excel_log.to_date(get(values, 'date')), excel_log.to_clock(get(values, 'depart'))
-        if date is None or depart is None:
+        if date is None:
+            continue
+        plate_key = excel_log.as_text(get(values, 'plate')).casefold()
+        row_driver = excel_log.as_text(get(values, 'driver'))
+        if row_driver:
+            known_drivers.setdefault(row_driver.casefold(), row_driver)
+            drivers_by_plate[plate_key].append((date, row_driver))
+        if depart is None:
+            if all(excel_log.is_blank(get(values, n)) for n in ('arrive', 'origin', 'destination')):
+                parking_rows.setdefault((date, plate_key), (row_no, values))
             continue
         arrive = excel_log.to_clock(get(values, 'arrive'))
         depart_at = dt.datetime.combine(date, dt.time()) + depart
@@ -242,12 +273,15 @@ def _plan_parks(snapshot, parks, plate, path):
     departs = {key: [s.depart for s in spans] for key, spans in legs_by_plate.items()}
 
     result = ParkMergeResult(parks=len(parks))
-    by_row, unmatched = defaultdict(list), []
+    by_row, loose = defaultdict(list), defaultdict(list)  # loose: (date, plate) -> stops with no trip
+    report_days = {}  # plate -> (first, last) stop date in this report
     for park in parks:
         key = (plate or park.plate).casefold()
+        first, last = report_days.get(key, (park.start.date(), park.start.date()))
+        report_days[key] = (min(first, park.start.date()), max(last, park.start.date()))
         i = bisect.bisect_right(departs.get(key, []), park.start) - 1
         if i < 0:
-            unmatched.append(park)
+            loose[(park.start.date(), key)].append(park)
             continue
         leg = legs_by_plate[key][i]
         days = {leg.date, leg.arrive.date()}
@@ -256,32 +290,86 @@ def _plan_parks(snapshot, parks, plate, path):
             if next_day - leg.arrive.date() <= dt.timedelta(days=1):  # no trip-less days in between
                 days.add(next_day)
         if park.start.date() not in days:
-            unmatched.append(park)
+            loose[(park.start.date(), key)].append(park)
             continue
         by_row[leg.row].append((leg, park))
         result.matched += 1
 
+    def note(row_driver, date):
+        if row_driver and row_driver not in result.drivers:
+            result.drivers.append(row_driver)
+        result.start = min(result.start or date, date)
+        result.end = max(result.end or date, date)
+
     plan = Plan(result, input_cols=sorted(c + 1 for c in cols.values()), table_last=snapshot.table_last)
     for row, pairs in sorted(by_row.items()):
-        stops = [park for _, park in pairs]
-        plan.log_cells[(row, cols['park_count'] + 1)] = len(stops)
-        plan.log_cells[(row, cols['park_time'] + 1)] = sum((p.duration for p in stops), dt.timedelta())
-        plan.log_cells[(row, cols['park_address'] + 1)] = '\n'.join(p.address for p in stops)
-        coordinates = '\n'.join(p.coordinates for p in stops)
-        if coordinates.strip():
-            plan.log_cells[(row, cols['park_coordinates'] + 1)] = coordinates
-            # A cell holds one link: use the longest stop. The website links every stop.
-            longest = max((p for p in stops if p.coordinates), key=lambda p: p.duration)
-            plan.hyperlinks[(row, cols['park_coordinates'] + 1)] = excel_log.maps_url(longest.coordinates)
+        _plan_stops(plan, cols, row, [park for _, park in pairs])
         leg = pairs[0][0]
         result.rows.append(row)
-        if leg.driver and leg.driver not in result.drivers:
-            result.drivers.append(leg.driver)
-        result.start = min(result.start or leg.date, leg.date)
-        result.end = max(result.end or leg.date, leg.date)
-    result.unmatched = len(unmatched)
-    result.unmatched_dates = sorted({p.start.date() for p in unmatched})
+        note(leg.driver, leg.date)
+
+    def driver_for(park, date, key):
+        if driver:
+            return driver
+        if park.driver:
+            return known_drivers.get(park.driver.casefold(), park.driver)
+        nearby = drivers_by_plate.get(key)
+        if nearby:  # the device name has no driver: whoever drove this vehicle closest to that day
+            return min(nearby, key=lambda item: abs(item[0] - date))[1]
+        raise ActivityLogError(f'Cannot tell the driver from the device name "{park.device}". '
+                               'Type the driver name and import again.')
+
+    new_row = _existing_trips(snapshot.log_rows, cols)[1] + 1
+    for (date, key), stops in sorted(loose.items(), key=lambda item: (item[0][1], item[0][0])):
+        if (date, key) in parking_rows:
+            row, values = parking_rows[(date, key)]
+            row_driver = excel_log.as_text(get(values, 'driver'))
+        else:
+            row, new_row = new_row, new_row + 1
+            row_driver = driver_for(stops[0], date, key)
+            plan.log_cells[(row, cols['date'] + 1)] = date
+            plan.log_cells[(row, cols['driver'] + 1)] = row_driver
+            plan.log_cells[(row, cols['plate'] + 1)] = plate or stops[0].plate
+            result.added += 1
+            plan.new_rows_until = row
+        _plan_stops(plan, cols, row, stops)
+        result.parking_only += len(stops)
+        result.parking_only_rows.append(row)
+        result.parking_only_dates.append(date)
+        note(row_driver, date)
+    result.parking_only_rows.sort()
+    result.parking_only_dates = sorted(set(result.parking_only_dates))
+
+    # Parking-only rows from an earlier merge whose stops now belong to trips: clear them.
+    for (date, key), (row, values) in sorted(parking_rows.items(), key=lambda item: item[1][0]):
+        first, last = report_days.get(key, (None, None))
+        if (date, key) in loose or first is None or not first <= date <= last:
+            continue
+        filled = [n for n in PARK_FIELDS if not excel_log.is_blank(get(values, n))]
+        if not filled:
+            continue
+        for name in filled:
+            plan.log_cells[(row, cols[name] + 1)] = None
+        plan.hyperlinks[(row, cols['park_coordinates'] + 1)] = None
+        kept = ('date', 'driver', 'plate') + PARK_FIELDS
+        if all(excel_log.is_blank(get(values, n)) for n in cols if n not in kept):
+            for name in ('date', 'driver', 'plate'):  # nothing else typed on it: blank the whole row
+                plan.log_cells[(row, cols[name] + 1)] = None
+        result.cleared_rows.append(row)
     return plan
+
+
+def _plan_stops(plan, cols, row, stops):
+    """Write `stops` into the park cells of `row`, one line per stop."""
+    plan.log_cells[(row, cols['park_count'] + 1)] = len(stops)
+    plan.log_cells[(row, cols['park_time'] + 1)] = sum((p.duration for p in stops), dt.timedelta())
+    plan.log_cells[(row, cols['park_address'] + 1)] = '\n'.join(p.address for p in stops)
+    coordinates = '\n'.join(p.coordinates for p in stops)
+    if coordinates.strip():
+        plan.log_cells[(row, cols['park_coordinates'] + 1)] = coordinates
+        # A cell holds one link: use the longest stop. The website links every stop.
+        longest = max((p for p in stops if p.coordinates), key=lambda p: p.duration)
+        plan.hyperlinks[(row, cols['park_coordinates'] + 1)] = excel_log.maps_url(longest.coordinates)
 
 
 def _existing_trips(rows, cols):
@@ -383,12 +471,12 @@ def _apply_with_openpyxl(path, planner, backup_dir):
             _copy_template_row(ws, row, formula_cols)
         _extend_table(ws, plan.table_last, plan.new_rows_until)
     for (row, col), value in plan.log_cells.items():
-        ws.cell(row=row, column=col, value=value)
-    for (row, col), url in plan.hyperlinks.items():
+        ws.cell(row=row, column=col).value = value  # ws.cell(..., value=None) would leave the old value
+    for (row, col), url in plan.hyperlinks.items():  # url None: remove the link
         cell = ws.cell(row=row, column=col)
-        cell.hyperlink = url
+        cell.hyperlink = url or None
         font = copy(cell.font)
-        font.color, font.underline = LINK_FONT_COLOR, 'single'
+        font.color, font.underline = (LINK_FONT_COLOR, 'single') if url else (None, None)
         cell.font = font
     for (row, col), value in plan.list_cells.items():
         lists.cell(row=row, column=col, value=value)
@@ -491,10 +579,16 @@ def _apply_with_excel(workbook, path, planner, backup_dir):
             for col in plan.input_cols:
                 ws.Range(ws.Cells(first_new, col), ws.Cells(plan.new_rows_until, col)).ClearContents()
         for (row, col), value in plan.log_cells.items():
-            ws.Cells(row, col).Value2 = _excel_value(value)
+            if value is None:
+                ws.Cells(row, col).ClearContents()
+            else:
+                ws.Cells(row, col).Value2 = _excel_value(value)
         for (row, col), url in plan.hyperlinks.items():
             cell = ws.Cells(row, col)
-            ws.Hyperlinks.Add(Anchor=cell, Address=url, TextToDisplay=str(cell.Value2))
+            if url:
+                ws.Hyperlinks.Add(Anchor=cell, Address=url, TextToDisplay=str(cell.Value2))
+            elif cell.Hyperlinks.Count:
+                cell.Hyperlinks.Delete()
         for (row, col), value in plan.list_cells.items():
             lists.Cells(row, col).Value2 = _excel_value(value)
         workbook.Save()
