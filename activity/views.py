@@ -88,7 +88,7 @@ def drivers_activity(request):
         return render(request, 'activity/drivers_Activity.html', context, status=503)
 
     # (driver limited to the selected dates, number of trips on any date)
-    rows = [(d.between(start, end), len(d.legs)) for d in _matching(log, q)]
+    rows = [(d.between(start, end), len(d.trips)) for d in _matching(log, q)]
     drivers = [driver for driver, _ in rows]
     distances = [d.distance for d in drivers if d.distance is not None]
     context.update(
@@ -96,8 +96,9 @@ def drivers_activity(request):
         rows=rows,
         drivers=drivers,
         total_drivers=len(log.drivers),
-        active_drivers=sum(1 for d in drivers if d.legs),
-        total_legs=sum(len(d.legs) for d in drivers),
+        active_drivers=sum(1 for d in drivers if d.trips),
+        can_export=any(d.legs for d in drivers),  # parking-only rows count: they are exported too
+        total_legs=sum(len(d.trips) for d in drivers),
         total_long_stays=sum(d.long_stays for d in drivers),
         total_distance=sum(distances) if distances else None,
     )
@@ -128,7 +129,7 @@ def driver_travel_record(request, name):
         log=log,
         driver=record,
         days=list(reversed(record.days)),
-        all_legs=len(driver.legs),
+        all_legs=len(driver.trips),
         vehicles=[log.vehicle(plate) for plate in record.plates],
     )
     return render(request, 'activity/Driver_travel_record.html', context)
@@ -193,7 +194,7 @@ def import_travel_report(request):
         kind = sinotrack.detect_report(data)
         if kind == 'park':
             parks, invalid_rows = sinotrack.parse_park_report(data)
-            result = log_writer.merge_parks(settings.ACTIVITY_LOG_PATH, parks, plate=plate)
+            result = log_writer.merge_parks(settings.ACTIVITY_LOG_PATH, parks, plate=plate, driver=driver)
             changed = _report_park_merge(request, upload.name, result)
         elif kind == 'travel':
             trips, invalid_rows = sinotrack.parse_travel_report(data)
@@ -260,17 +261,27 @@ def _report_trip_import(request, name, result):
     return True
 
 
+def _plural(count, word):
+    return f'{count} {word}{"s" * (count != 1)}'
+
+
 def _report_park_merge(request, name, result):
-    if result.unmatched:
-        days = ', '.join(f'{d:%b} {d.day}' for d in result.unmatched_dates)
-        messages.warning(
-            request, f'{result.unmatched} of {result.parks} stops in {name} have no trip in the Activity Log '
-                     f'on that day ({days}). Import the Travel Report for those days, then import this '
-                     'Park Report again.')
-    if not result.matched:
-        return False
-    messages.success(
-        request, f'Merged {result.matched} of {result.parks} stops from {name} into {len(result.rows)} trip '
-                 f'rows of the {excel_log.LOG_SHEET} sheet ({_rows_text(result.rows)}): Park Count, '
-                 f'Park Time, Park Address and Park Coordinates.' + _saved_text(result))
+    parts = []
+    if result.matched:
+        parts.append(f'Merged {result.matched} of {result.parks} stops from {name} into '
+                     f'{_plural(len(result.rows), "trip row")} of the {excel_log.LOG_SHEET} sheet '
+                     f'({_rows_text(result.rows)}): Park Count, Park Time, Park Address and Park Coordinates.')
+    if result.parking_only:
+        days = ', '.join(f'{d:%b} {d.day}' for d in result.parking_only_dates)
+        rows = result.parking_only_rows
+        on_days = 'a day' if len(result.parking_only_dates) == 1 else 'days'
+        parts.append(f'{_plural(result.parking_only, "stop")} on {on_days} with no trip in the log ({days}) '
+                     f'{"was" if result.parking_only == 1 else "were"} copied into '
+                     f'{_plural(len(rows), "parking-only row")} ({_rows_text(rows)}), with no depart or arrive '
+                     'time. If you import the Travel Report for those days later, import this Park Report '
+                     'again to move the stops onto the trips.')
+    if result.cleared_rows:
+        parts.append(f'Cleared {_plural(len(result.cleared_rows), "parking-only row")} '
+                     f'({_rows_text(result.cleared_rows)}) whose stops now belong to trips.')
+    messages.success(request, ' '.join(parts) + _saved_text(result))
     return True
