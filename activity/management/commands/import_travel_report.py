@@ -8,11 +8,12 @@ from activity import excel_log, log_writer, sinotrack
 
 class Command(BaseCommand):
     help = ('Copy SinoTrack Travel Report CSVs (new trip rows) or Park Report CSVs (stops merged into '
-            'the trip rows) into the Activity Log sheet of the Excel workbook. Import the Travel Report first.')
+            'the trip rows; stops on days without trips get parking-only rows) into the Activity Log sheet '
+            'of the Excel workbook. Import the Travel Report first.')
 
     def add_arguments(self, parser):
         parser.add_argument('csv', nargs='+', type=Path, help='Travel Report or Park Report CSV file(s) from SinoTrack.')
-        parser.add_argument('--driver', help='Driver name to use instead of the one in the device name (travel reports).')
+        parser.add_argument('--driver', help='Driver name to use instead of the one in the device name.')
         parser.add_argument('--plate', help='Plate No. to use instead of the one in the device name.')
         parser.add_argument('--workbook', type=Path, default=settings.ACTIVITY_LOG_PATH,
                             help='Workbook to update (default: ACTIVITY_LOG_PATH).')
@@ -24,7 +25,8 @@ class Command(BaseCommand):
                 kind = sinotrack.detect_report(data)
                 if kind == 'park':
                     parks, invalid_rows = sinotrack.parse_park_report(data)
-                    result = log_writer.merge_parks(options['workbook'], parks, plate=options['plate'])
+                    result = log_writer.merge_parks(options['workbook'], parks, plate=options['plate'],
+                                                    driver=options['driver'])
                     self._park_summary(csv_path, result)
                 elif kind == 'travel':
                     trips, invalid_rows = sinotrack.parse_travel_report(data)
@@ -66,8 +68,11 @@ class Command(BaseCommand):
             self.stdout.write(self.style.SUCCESS(
                 f'{csv_path.name}: merged {result.matched} of {result.parks} stops into {len(result.rows)} '
                 f'trip rows ({min(result.rows)}-{max(result.rows)}).'))
-        if result.unmatched:
-            days = ', '.join(f'{d:%b %d}' for d in result.unmatched_dates)
-            self.stdout.write(self.style.WARNING(
-                f'  {result.unmatched} stops have no trip in the log on that day ({days}). Import the Travel '
-                'Report for those days, then this Park Report again.'))
+        if result.parking_only:
+            days = ', '.join(f'{d:%b %d}' for d in result.parking_only_dates)
+            rows = result.parking_only_rows
+            self.stdout.write(self.style.SUCCESS(
+                f'{csv_path.name}: copied {result.parking_only} stops on days with no trip ({days}) into '
+                f'{len(rows)} parking-only rows ({min(rows)}-{max(rows)}).'))
+        if result.cleared_rows:
+            self.stdout.write(f'  Cleared parking-only rows whose stops now belong to trips: {result.cleared_rows}')
