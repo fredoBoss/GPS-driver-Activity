@@ -38,6 +38,8 @@ DATETIME_FORMATS = ('%Y-%m-%d %H:%M:%S', '%Y-%m-%d %H:%M', '%Y/%m/%d %H:%M:%S', 
 
 # "T05_RJP 162 - Gonzaga" -> unit "T05", plate "RJP 162", driver "Gonzaga"
 DEVICE_NAME = re.compile(r'^(?P<unit>[^_\s]+)_(?P<plate>.+?)\s+-\s+(?P<driver>.+)$')
+# Some devices are named without the " - ": "T06_RLR 795 Capoy" (plate = letters, then digits).
+DEVICE_NAME_NO_DASH = re.compile(r'^(?P<unit>[^_\s]+)_(?P<plate>[A-Za-z]{1,4}\s?\d{2,5})\s+(?P<driver>\S.*)$')
 
 
 class ReportError(Exception):
@@ -109,7 +111,7 @@ def lat_lon(latitude, longitude):
 
 def parse_device_name(name):
     """Split a SinoTrack device name into (unit, plate, driver); unparsed names become the plate."""
-    match = DEVICE_NAME.match(name)
+    match = DEVICE_NAME.match(name) or DEVICE_NAME_NO_DASH.match(name)
     if not match:
         return '', name, ''
     return match['unit'], match['plate'].strip(), match['driver'].strip()
