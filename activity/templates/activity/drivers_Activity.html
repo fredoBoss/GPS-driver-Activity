@@ -17,7 +17,7 @@
 <main class="wrap">
   <div class="page-head">
     <h1>Driver Activity</h1>
-    {% if active_drivers %}
+    {% if can_export %}
       <a class="btn btn-secondary" href="{% url 'activity:export_all_travel_records' %}{% if export_query %}?{{ export_query }}{% endif %}"
          title="Download the travel records of the drivers shown (the dates shown) as one Excel workbook, one sheet per driver">Export all to Excel</a>
     {% endif %}
@@ -61,7 +61,9 @@
         <strong>Travel Report:</strong> each trip is copied into the next empty row of the Activity Log sheet
         (Date, Driver Name, Plate No., From, From Coordinates, Depart Time, To, To Coordinates, Arrive Time);
         for trips already in the log only the blank cells are filled in. <strong>Park Report:</strong> each stop is merged into the trip row it belongs to (Park Count,
-        Park Time, Park Address, Park Coordinates), so import the Travel Report for those days first.
+        Park Time, Park Address, Park Coordinates). Stops on a day with no trip in the log get their own
+        parking-only row (no depart or arrive time); if you import that day's Travel Report later, import the
+        Park Report again to move the stops onto the trips.
         The driver and plate come from the SinoTrack device name (“T05_RJP 162 - Gonzaga” → plate RJP 162,
         driver Gonzaga) unless you type them above. If the workbook is open in Excel, the cells are typed into
         it there and Excel saves it (so finish editing any cell first). A backup copy is saved in the
@@ -130,7 +132,7 @@
                   <td>{{ driver.contact|default:"—" }}</td>
                   <td>{% for plate in driver.plates %}<span class="pill pill-plate">{{ plate }}</span> {% empty %}—{% endfor %}</td>
                   <td class="num">{{ driver.days|length }}</td>
-                  <td class="num">{{ driver.legs|length }}</td>
+                  <td class="num">{{ driver.trips|length }}</td>
                   <td class="num">{{ driver.travel|duration }}</td>
                   <td class="num">{{ driver.stay|hms }}</td>
                   <td class="num">{% if driver.long_stays %}<span class="pill pill-danger">{{ driver.long_stays }}</span>{% else %}0{% endif %}</td>
