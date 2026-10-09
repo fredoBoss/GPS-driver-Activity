@@ -200,10 +200,6 @@ class Day:
         return sum(leg.check_order for leg in self.legs)
 
     @cached_property
-    def distance(self):
-        return _sum_numbers(leg.distance for leg in self.legs)
-
-    @cached_property
     def park_count(self):
         return _sum_numbers(leg.park_count for leg in self.legs)
 
@@ -261,10 +257,6 @@ class Driver:
     @cached_property
     def check_orders(self):
         return sum(leg.check_order for leg in self.legs)
-
-    @cached_property
-    def distance(self):
-        return _sum_numbers(leg.distance for leg in self.legs)
 
     @cached_property
     def park_count(self):

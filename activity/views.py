@@ -90,7 +90,6 @@ def drivers_activity(request):
     # (driver limited to the selected dates, number of trips on any date)
     rows = [(d.between(start, end), len(d.trips)) for d in _matching(log, q)]
     drivers = [driver for driver, _ in rows]
-    distances = [d.distance for d in drivers if d.distance is not None]
     context.update(
         log=log,
         rows=rows,
@@ -100,7 +99,6 @@ def drivers_activity(request):
         can_export=any(d.legs for d in drivers),  # parking-only rows count: they are exported too
         total_legs=sum(len(d.trips) for d in drivers),
         total_long_stays=sum(d.long_stays for d in drivers),
-        total_distance=sum(distances) if distances else None,
     )
     return render(request, 'activity/drivers_Activity.html', context)
 

@@ -98,7 +98,6 @@
       <div class="stat"><div class="label">Drivers with trips</div><div class="value">{{ active_drivers }} / {{ drivers|length }}</div></div>
       <div class="stat"><div class="label">Trip legs</div><div class="value">{{ total_legs|number }}</div></div>
       <div class="stat{% if total_long_stays %} danger{% endif %}"><div class="label">Long stays</div><div class="value">{{ total_long_stays }}</div></div>
-      <div class="stat"><div class="label">Distance (km)</div><div class="value">{{ total_distance|number }}</div></div>
     </section>
 
     {% if drivers %}
@@ -115,7 +114,6 @@
                 <th class="num">Travel Time</th>
                 <th class="num">Stay Time</th>
                 <th class="num">Long Stays</th>
-                <th class="num">Distance (km)</th>
                 {% if log.has_park_count %}<th class="num">Park Count</th>{% endif %}
                 {% if log.has_park_time %}<th class="num">Park Time</th>{% endif %}
                 <th>Last Trip</th>
@@ -136,7 +134,6 @@
                   <td class="num">{{ driver.travel|duration }}</td>
                   <td class="num">{{ driver.stay|hms }}</td>
                   <td class="num">{% if driver.long_stays %}<span class="pill pill-danger">{{ driver.long_stays }}</span>{% else %}0{% endif %}</td>
-                  <td class="num">{{ driver.distance|number }}</td>
                   {% if log.has_park_count %}<td class="num">{{ driver.park_count|number }}</td>{% endif %}
                   {% if log.has_park_time %}<td class="num">{{ driver.park_time|hms }}</td>{% endif %}
                   <td class="time">{{ driver.last_date|date:"M j, Y"|default:"—" }}</td>

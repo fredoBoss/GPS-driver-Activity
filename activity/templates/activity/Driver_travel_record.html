@@ -67,7 +67,6 @@
       <div class="stat"><div class="label">Travel time</div><div class="value">{{ driver.travel|duration }}</div></div>
       <div class="stat"><div class="label">Stay time</div><div class="value">{{ driver.stay|hms }}</div></div>
       <div class="stat{% if driver.long_stays %} danger{% endif %}"><div class="label">Long stays</div><div class="value">{{ driver.long_stays }}</div></div>
-      <div class="stat"><div class="label">Distance (km)</div><div class="value">{{ driver.distance|number }}</div></div>
       {% if log.has_park_count %}<div class="stat"><div class="label">Park count</div><div class="value">{{ driver.park_count|number }}</div></div>{% endif %}
       {% if log.has_park_time %}<div class="stat"><div class="label">Park time</div><div class="value">{{ driver.park_time|hms }}</div></div>{% endif %}
     </section>
@@ -88,7 +87,6 @@
             <span>Travel <b>{{ day.travel|duration }}</b></span>
             <span>Stay <b>{{ day.stay|hms }}</b></span>
             {% if log.has_park_time %}<span>Parked <b>{{ day.park_time|hms }}</b></span>{% endif %}
-            <span><b>{{ day.distance|number }}</b> km</span>
           </div>
         </div>
         <div class="table-wrap">
@@ -107,7 +105,6 @@
                 {% if log.has_park_time %}<th class="num">Park Time</th>{% endif %}
                 {% if log.has_park_address %}<th>Park Address</th>{% endif %}
                 {% if log.has_purpose %}<th>Purpose</th>{% endif %}
-                <th class="num">Distance (km)</th>
                 <th>Remarks / DR No.</th>
               </tr>
             </thead>
@@ -140,7 +137,6 @@
                     </td>
                   {% endif %}
                   {% if log.has_purpose %}<td>{{ leg.purpose|default:"—" }}</td>{% endif %}
-                  <td class="num">{{ leg.distance|number }}</td>
                   <td>{{ leg.remarks|default:"—" }}</td>
                 </tr>
               {% endfor %}

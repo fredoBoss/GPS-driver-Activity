@@ -23,7 +23,6 @@ FMT_TIME = 'h:mm AM/PM'
 FMT_NEXT_DAY = 'mmm d, h:mm AM/PM'
 FMT_HM = '[h]:mm'
 FMT_HMS = '[h]:mm:ss'
-FMT_KM = '#,##0.0'
 HEADER_ROW = 4
 
 F_BODY = Font(name=FONT, size=10)
@@ -94,7 +93,6 @@ def _leg_columns(log):
     if has('purpose'):
         columns.append(_Column('Purpose', 16, lambda leg, n: leg.purpose or None))
     columns += [
-        _Column('Distance (km)', 11, lambda leg, n: leg.distance, FMT_KM, total='SUM'),
         _Column('Remarks / DR No.', 26, lambda leg, n: leg.remarks or None, wrap=True),
     ]
     return columns
@@ -125,7 +123,6 @@ def _day_columns(log):
         columns.append(_Column('Park Count', 10, lambda day, n: day.park_count, '0', total='SUM'))
     if has('park_time'):
         columns.append(_Column('Park Time', 11, lambda day, n: day.park_time, FMT_HMS, total='SUM'))
-    columns.append(_Column('Distance (km)', 12, lambda day, n: day.distance, FMT_KM, total='SUM'))
     return columns
 
 
