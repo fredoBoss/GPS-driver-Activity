@@ -34,6 +34,11 @@
     <label>To
       <input type="date" name="end" value="{{ end|date:'Y-m-d' }}">
     </label>
+    <label>Sort by
+      <select name="sort" onchange="this.form.submit()">
+        {% for value, label in sorts %}<option value="{{ value }}"{% if value == sort %} selected{% endif %}>{{ label }}</option>{% endfor %}
+      </select>
+    </label>
     <button class="btn" type="submit">Apply</button>
     <a class="btn-link" href="{% url 'activity:drivers_activity' %}">Clear</a>
     <nav class="presets" aria-label="Date presets">
@@ -134,11 +139,11 @@
                   <td>{% for plate in driver.plates %}<span class="pill pill-plate">{{ plate }}</span> {% empty %}—{% endfor %}</td>
                   <td class="num">{{ driver.days|length }}</td>
                   <td class="num">{{ driver.trips|length }}</td>
-                  <td class="num">{{ driver.travel|duration }}</td>
-                  <td class="num">{{ driver.stay|hms }}</td>
+                  <td class="num">{{ driver.travel|dhms }}</td>
+                  <td class="num">{{ driver.stay|dhms }}</td>
                   <td class="num">{% if driver.long_stays %}<span class="pill pill-danger">{{ driver.long_stays }}</span>{% else %}0{% endif %}</td>
                   {% if log.has_park_count %}<td class="num">{{ driver.park_count|number }}</td>{% endif %}
-                  {% if log.has_park_time %}<td class="num">{{ driver.park_time|hms }}</td>{% endif %}
+                  {% if log.has_park_time %}<td class="num">{{ driver.park_time|dhms }}</td>{% endif %}
                   <td class="time">{{ driver.last_date|date:"M j, Y"|default:"—" }}</td>
                 </tr>
               {% endfor %}
@@ -146,7 +151,7 @@
           </table>
         </div>
       </div>
-      <p class="footnote">Long stay = a stay of {{ log.threshold|hms }} or more at one place (set on the Lists sheet, cell B3). Click a driver to see their travel record.</p>
+      <p class="footnote">Times are DD-HH-MM-SS (days-hours-minutes-seconds). Long stay = a stay of {{ log.threshold|dhms }} or more at one place (set on the Lists sheet, cell B3). Click a driver to see their travel record.</p>
     {% elif q %}
       <div class="empty">No driver name matches “{{ q }}”.</div>
     {% else %}
