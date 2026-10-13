@@ -13,6 +13,9 @@ from . import excel_log, export, log_writer, sinotrack
 
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+SORTS = {'name': 'Name (A–Z)', 'added': 'Date added (newest first)'}
+DEFAULT_SORT = 'name'
+SORT_COOKIE = 'driver_sort'  # remembers the choice, e.g. after opening a driver and coming back
 
 
 def _date_range(request):
@@ -53,7 +56,7 @@ def _presets(start, end, extra=None):
     return presets
 
 
-def _filter_query(start, end, q=''):
+def _filter_query(start, end, q='', sort=DEFAULT_SORT):
     params = {}
     if start:
         params['start'] = start.isoformat()
@@ -61,26 +64,43 @@ def _filter_query(start, end, q=''):
         params['end'] = end.isoformat()
     if q:
         params['q'] = q
+    if sort != DEFAULT_SORT:
+        params['sort'] = sort
     return urlencode(params)
 
 
-def _matching(log, q):
-    """Drivers whose name contains `q`, A to Z (the list page and the "Export all" sheets)."""
-    return sorted((d for d in log.drivers if q.casefold() in d.name.casefold()), key=lambda d: d.name.casefold())
+def _sort(request):
+    """?sort=..., else the last choice (cookie), else name."""
+    sort = request.GET.get('sort') or request.COOKIES.get(SORT_COOKIE, '')
+    return sort if sort in SORTS else DEFAULT_SORT
+
+
+def _matching(log, q, sort=DEFAULT_SORT):
+    """Drivers whose name contains `q`, in the chosen order (the list page and the "Export all" sheets)."""
+    drivers = [d for d in log.drivers if q.casefold() in d.name.casefold()]
+    if sort == 'added':
+        # The workbook keeps no creation date. log.drivers is in the order drivers were added: Lists
+        # sheet rows top to bottom (imports add new drivers to the next free row), then names that
+        # are only in the Activity Log, by first row. Newest first is that order reversed.
+        return drivers[::-1]
+    return sorted(drivers, key=lambda d: d.name.casefold())
 
 
 def drivers_activity(request):
     start, end, notices = _date_range(request)
     q = request.GET.get('q', '').strip()
+    sort = _sort(request)
     context = {
         'start': start,
         'end': end,
         'q': q,
+        'sort': sort,
+        'sorts': SORTS.items(),
         'notices': notices,
         'presets': _presets(start, end, {'q': q} if q else None),
         'filter_query': _filter_query(start, end),
-        # The export follows the search too: it holds the drivers shown on the page.
-        'export_query': _filter_query(start, end, q),
+        # The export follows the search and the sort too: it holds the drivers shown on the page.
+        'export_query': _filter_query(start, end, q, sort),
     }
     try:
         log = excel_log.load(settings.ACTIVITY_LOG_PATH)
@@ -89,7 +109,7 @@ def drivers_activity(request):
         return render(request, 'activity/drivers_Activity.html', context, status=503)
 
     # (driver limited to the selected dates, number of trips on any date)
-    rows = [(d.between(start, end), len(d.trips)) for d in _matching(log, q)]
+    rows = [(d.between(start, end), len(d.trips)) for d in _matching(log, q, sort)]
     drivers = [driver for driver, _ in rows]
     context.update(
         log=log,
@@ -101,7 +121,10 @@ def drivers_activity(request):
         total_legs=sum(len(d.trips) for d in drivers),
         total_long_stays=sum(d.long_stays for d in drivers),
     )
-    return render(request, 'activity/drivers_Activity.html', context)
+    response = render(request, 'activity/drivers_Activity.html', context)
+    if request.GET.get('sort') in SORTS:
+        response.set_cookie(SORT_COOKIE, sort, max_age=365 * 24 * 3600, samesite='Lax')
+    return response
 
 
 def driver_travel_record(request, name):
@@ -157,7 +180,8 @@ def export_all_travel_records(request):
     """Every driver on the list page with trips in the selected dates: one sheet per driver."""
     start, end, _ = _date_range(request)
     q = request.GET.get('q', '').strip()
-    query = _filter_query(start, end, q)
+    sort = _sort(request)
+    query = _filter_query(start, end, q, sort)
     back = reverse('activity:drivers_activity') + (f'?{query}' if query else '')
     try:
         log = excel_log.load(settings.ACTIVITY_LOG_PATH)
@@ -165,7 +189,7 @@ def export_all_travel_records(request):
         messages.error(request, f'Cannot export: {exc}')
         return redirect(back)
     # Drivers without trips in these dates are left out rather than given empty sheets.
-    records = [r for r in (d.between(start, end) for d in _matching(log, q)) if r.legs]
+    records = [r for r in (d.between(start, end) for d in _matching(log, q, sort)) if r.legs]
     if not records:
         messages.info(request, 'Nothing to export: no driver has trips on these dates.')
         return redirect(back)

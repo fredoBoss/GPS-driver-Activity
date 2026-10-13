@@ -6,22 +6,14 @@ EMPTY = '—'
 
 
 @register.filter
-def duration(value):
-    """timedelta -> "h:mm" (hours may pass 24)."""
-    if value is None or value == '':
-        return EMPTY
-    minutes = round(value.total_seconds() / 60)
-    return f'{minutes // 60}:{minutes % 60:02d}'
-
-
-@register.filter
-def hms(value):
-    """timedelta -> "hh:mm:ss" (hours may pass 24), used for stays and the long-stay rule."""
+def dhms(value):
+    """timedelta -> "DD-HH-MM-SS" (days-hours-minutes-seconds), used for every duration on the pages."""
     if value is None or value == '':
         return EMPTY
     minutes, seconds = divmod(round(value.total_seconds()), 60)
     hours, minutes = divmod(minutes, 60)
-    return f'{hours:02d}:{minutes:02d}:{seconds:02d}'
+    days, hours = divmod(hours, 24)
+    return f'{days:02d}-{hours:02d}-{minutes:02d}-{seconds:02d}'
 
 
 @register.filter
