@@ -62,7 +62,8 @@
     {% for warning in log.warnings %}<p class="notice">{{ warning }}</p>{% endfor %}
 
     <section class="stats" aria-label="Totals for this period">
-      <div class="stat"><div class="label">Days</div><div class="value">{{ days|length }}</div></div>
+      <div class="stat"><div class="label">Days traveled</div><div class="value">{{ days_traveled }}</div></div>
+      <div class="stat{% if days_not_traveled %} warn{% endif %}"><div class="label">Days not traveled</div><div class="value">{{ days_not_traveled }}</div></div>
       <div class="stat"><div class="label">Trip legs</div><div class="value">{{ driver.trips|length }}</div></div>
       <div class="stat"><div class="label">Travel time</div><div class="value">{{ driver.travel|dhms }}</div></div>
       <div class="stat"><div class="label">Stay time</div><div class="value">{{ driver.stay|dhms }}</div></div>
@@ -71,12 +72,34 @@
       {% if log.has_park_time %}<div class="stat"><div class="label">Park time</div><div class="value">{{ driver.park_time|dhms }}</div></div>{% endif %}
     </section>
 
-    {% for day in days %}
+    {% if days_not_traveled %}
+      <p class="idle-summary">
+        Did not travel on <strong>{{ days_not_traveled }} of {{ period_days }} day{{ period_days|pluralize }}</strong>
+        ({{ period_first|date:"M j, Y" }} – {{ period_last|date:"M j, Y" }}):
+        {% for first, last, count in not_traveled %}{{ first|date:"M j" }}{% if last != first %} – {{ last|date:"M j" }}{% endif %} ({{ count }} day{{ count|pluralize }}){% if not forloop.last %}, {% endif %}{% endfor %}.
+      </p>
+    {% endif %}
+
+    {% if not days %}
+      <div class="empty">
+        No trips recorded for {{ driver.name }}{% if start or end %} in this period{% endif %}.
+        {% if all_legs %}{{ all_legs }} trip{{ all_legs|pluralize }} on other dates: <a href="?">show all dates</a>.{% endif %}
+      </div>
+    {% endif %}
+    {% for item in timeline %}
+      {% if item.gap %}
+      <div class="no-travel" role="note">
+        <span class="pill pill-warn">No travel</span>
+        <strong>{{ item.first|date:"D, M j" }}{% if item.last != item.first %} – {{ item.last|date:"D, M j" }}{% endif %}</strong>
+        <span>{{ item.days }} day{{ item.days|pluralize }} without a trip</span>
+      </div>
+      {% else %}{% with day=item.day %}
       <section class="card" aria-label="{{ day.date|date:'l, M j, Y' }}">
         <div class="day-head">
           <div>
             <h2>{{ day.date|date:"D, M j, Y" }}</h2>
             {% for plate in day.plates %}<span class="pill pill-plate">{{ plate }}</span> {% endfor %}
+            {% if not day.trips %}<span class="pill pill-warn" title="Only parking on this day">No travel</span>{% endif %}
             {% if day.long_stays %}<span class="pill pill-danger">{{ day.long_stays }} long stay{{ day.long_stays|pluralize }}</span>{% endif %}
             {% if day.check_orders %}<span class="pill pill-warn">Check order</span>{% endif %}
           </div>
@@ -144,11 +167,7 @@
           </table>
         </div>
       </section>
-    {% empty %}
-      <div class="empty">
-        No trips recorded for {{ driver.name }}{% if start or end %} in this period{% endif %}.
-        {% if all_legs %}{{ all_legs }} trip{{ all_legs|pluralize }} on other dates: <a href="?">show all dates</a>.{% endif %}
-      </div>
+      {% endwith %}{% endif %}
     {% endfor %}
 
     {% if days %}

@@ -86,6 +86,53 @@ def _matching(log, q, sort=DEFAULT_SORT):
     return sorted(drivers, key=lambda d: d.name.casefold())
 
 
+def _period(log, start, end):
+    """The days that "days traveled / not traveled" count: the dates chosen, else the log's first
+    to last day (any driver, so drivers are compared over the same days), never past today."""
+    first, last = start or log.first_date, end or log.last_date
+    if first is None or last is None:
+        return None, None
+    last = min(last, dt.date.today())
+    return (first, last) if first <= last else (None, None)
+
+
+def _days_not_traveled(driver, first, last):
+    """Dates from `first` to `last` on which the driver made no trip (parking-only days included)."""
+    if first is None:
+        return []
+    every_day = (first + dt.timedelta(days=i) for i in range((last - first).days + 1))
+    return [day for day in every_day if day not in driver.travel_dates]
+
+
+def _timeline(record, not_traveled):
+    """The record's days newest first, with a "no travel" item for each run of dates in between
+    that has no day of its own (a parking-only day keeps its day card)."""
+    if not record.days:
+        return []
+    by_date, idle = {day.date: day for day in record.days}, set(not_traveled)
+    newest = max([record.days[-1].date, *idle])
+    oldest = min([record.days[0].date, *idle])
+    items, gap = [], []
+
+    def close_gap():
+        if gap:
+            items.append({'gap': True, 'first': gap[-1], 'last': gap[0], 'days': len(gap)})
+            gap.clear()
+
+    date = newest
+    while date >= oldest:
+        if date in by_date:
+            close_gap()
+            items.append({'day': by_date[date]})
+        elif date in idle:
+            gap.append(date)
+        else:  # e.g. the arrival day of a trip past midnight
+            close_gap()
+        date -= dt.timedelta(days=1)
+    close_gap()
+    return items
+
+
 def drivers_activity(request):
     start, end, notices = _date_range(request)
     q = request.GET.get('q', '').strip()
@@ -108,12 +155,20 @@ def drivers_activity(request):
         context['error'] = str(exc)
         return render(request, 'activity/drivers_Activity.html', context, status=503)
 
-    # (driver limited to the selected dates, number of trips on any date)
-    rows = [(d.between(start, end), len(d.trips)) for d in _matching(log, q, sort)]
-    drivers = [driver for driver, _ in rows]
+    first, last = _period(log, start, end)
+    period_days = (last - first).days + 1 if first else None
+    # (driver limited to the selected dates, trips on any date, days traveled, days not traveled)
+    rows = []
+    for d in _matching(log, q, sort):
+        not_traveled = len(_days_not_traveled(d, first, last)) if first else None
+        traveled = period_days - not_traveled if first else None
+        rows.append((d.between(start, end), len(d.trips), traveled, not_traveled))
+    drivers = [row[0] for row in rows]
     context.update(
         log=log,
         rows=rows,
+        period_first=first,
+        period_last=last,
         drivers=drivers,
         total_drivers=len(log.drivers),
         active_drivers=sum(1 for d in drivers if d.trips),
@@ -147,10 +202,19 @@ def driver_travel_record(request, name):
     if driver is None:
         raise Http404(f'No driver named "{name}" in {log.path.name}.')
     record = driver.between(start, end)
+    first, last = _period(log, start, end)
+    not_traveled = _days_not_traveled(driver, first, last)
     context.update(
         log=log,
         driver=record,
         days=list(reversed(record.days)),
+        timeline=_timeline(record, not_traveled),
+        period_first=first,
+        period_last=last,
+        period_days=(last - first).days + 1 if first else 0,
+        days_traveled=(last - first).days + 1 - len(not_traveled) if first else 0,
+        not_traveled=excel_log.date_ranges(not_traveled),
+        days_not_traveled=len(not_traveled),
         all_legs=len(driver.trips),
         vehicles=[log.vehicle(plate) for plate in record.plates],
     )

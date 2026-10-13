@@ -239,6 +239,17 @@ class Driver:
         return [leg for leg in self.legs if not leg.parking_only]
 
     @cached_property
+    def travel_dates(self):
+        """Dates the vehicle moved: each trip's date, plus the day it arrives for a trip past midnight.
+        Parking-only days are not travel days."""
+        dates = set()
+        for leg in self.trips:
+            dates.add(leg.date)
+            if leg.arrive_after_depart is not None and leg.arrive_after_depart >= DAY:
+                dates.add(leg.date + dt.timedelta(days=leg.arrive_after_depart // DAY))
+        return dates
+
+    @cached_property
     def last_date(self):
         return max((leg.date for leg in self.legs), default=None)
 
@@ -297,6 +308,15 @@ class ActivityLog:
     @property
     def has_purpose(self):
         return 'purpose' in self.columns
+
+    @cached_property
+    def first_date(self):
+        """The first day in the log, any driver."""
+        return min((leg.date for d in self.drivers for leg in d.legs), default=None)
+
+    @cached_property
+    def last_date(self):
+        return max((leg.date for d in self.drivers for leg in d.legs), default=None)
 
     def find_driver(self, name):
         key = name.strip().casefold()
@@ -549,6 +569,17 @@ def _lines(value):
     if is_blank(value):
         return []
     return [line for line in (as_text(part) for part in str(value).splitlines()) if line]
+
+
+def date_ranges(dates):
+    """Dates -> runs of consecutive days as (first, last, number of days), oldest first."""
+    runs = []
+    for date in sorted(set(dates)):
+        if runs and date - runs[-1][1] == DAY:
+            runs[-1][1] = date
+        else:
+            runs.append([date, date])
+    return [(first, last, (last - first).days + 1) for first, last in runs]
 
 
 def _distinct(values):

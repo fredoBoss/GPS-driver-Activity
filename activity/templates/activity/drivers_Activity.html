@@ -117,7 +117,8 @@
                 <th>Driver Name</th>
                 <th>Contact No.</th>
                 <th>Plate No.</th>
-                <th class="num">Days</th>
+                <th class="num" title="Days with at least one trip">Days Traveled</th>
+                <th class="num" title="Days with no trip (parking only, or no record at all)">Days Not Traveled</th>
                 <th class="num">Trip Legs</th>
                 <th class="num">Travel Time</th>
                 <th class="num">Stay Time</th>
@@ -128,7 +129,7 @@
               </tr>
             </thead>
             <tbody>
-              {% for driver, all_legs in rows %}
+              {% for driver, all_legs, traveled, not_traveled in rows %}
                 <tr{% if not driver.legs %} class="idle"{% endif %}>
                   <td>
                     <a class="driver-link" href="{% url 'activity:driver_travel_record' name=driver.name %}{% if filter_query %}?{{ filter_query }}{% endif %}">{{ driver.name }}</a>
@@ -137,7 +138,8 @@
                   </td>
                   <td>{{ driver.contact|default:"—" }}</td>
                   <td>{% for plate in driver.plates %}<span class="pill pill-plate">{{ plate }}</span> {% empty %}—{% endfor %}</td>
-                  <td class="num">{{ driver.days|length }}</td>
+                  <td class="num">{{ traveled|default_if_none:"—" }}</td>
+                  <td class="num">{% if not_traveled %}<span class="pill pill-warn">{{ not_traveled }}</span>{% else %}{{ not_traveled|default_if_none:"—" }}{% endif %}</td>
                   <td class="num">{{ driver.trips|length }}</td>
                   <td class="num">{{ driver.travel|dhms }}</td>
                   <td class="num">{{ driver.stay|dhms }}</td>
@@ -151,7 +153,7 @@
           </table>
         </div>
       </div>
-      <p class="footnote">Times are DD-HH-MM-SS (days-hours-minutes-seconds). Long stay = a stay of {{ log.threshold|dhms }} or more at one place (set on the Lists sheet, cell B3). Click a driver to see their travel record.</p>
+      <p class="footnote">Times are DD-HH-MM-SS (days-hours-minutes-seconds). Long stay = a stay of {{ log.threshold|dhms }} or more at one place (set on the Lists sheet, cell B3).{% if period_first %} Days Traveled / Not Traveled count {{ period_first|date:"M j, Y" }} – {{ period_last|date:"M j, Y" }}{% if not start and not end %}, the first to the last day in the log{% endif %}; a day with only parking counts as not traveled.{% endif %} Click a driver to see their travel record.</p>
     {% elif q %}
       <div class="empty">No driver name matches “{{ q }}”.</div>
     {% else %}
