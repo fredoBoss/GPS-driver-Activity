@@ -83,6 +83,23 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .presets.months { margin-top: -6px; }  /* month rows sit closer to the presets above than the form's gap */
 
+/* Travel record: each month of the period, day 1 to the last day, with the days not traveled highlighted */
+.idle-head { margin: 0; }
+.idle-key { color: var(--muted); font-size: 13px; }
+.idle-month { margin-top: 12px; }
+.idle-month-name { margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+.idle-month-name strong { color: var(--text); }
+.idle-days { display: flex; flex-wrap: wrap; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.idle-days li {
+  display: flex; align-items: center; justify-content: center; width: 30px; height: 30px;
+  font-size: 12px; font-variant-numeric: tabular-nums; border-radius: 6px;
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+}
+.idle-days li a { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: inherit; text-decoration: none; }
+.idle-days li a:hover { text-decoration: underline; }
+.idle-days li.idle { background: var(--warn); border-color: var(--warn); color: #fff; font-weight: 700; }
+.idle-days li.out { background: transparent; border-style: dashed; color: var(--muted); opacity: .55; }
+
 /* Messages */
 .alert, .notice {
   border-radius: 8px; padding: 12px 14px; margin: 0 0 16px; font-size: 14px;

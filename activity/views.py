@@ -148,6 +148,30 @@ def _days_not_traveled(driver, first, last):
     return [day for day in every_day if day not in driver.travel_dates]
 
 
+def _idle_calendar(first, last, not_traveled, card_dates=()):
+    """The months from `first` to `last`, each with all its days (1 to 28–31): state 'idle' for a
+    day not traveled, 'traveled' for the other days of the period, 'out' for the days outside it.
+    `card` marks the days that have a day card on the page to jump to."""
+    if first is None:
+        return []
+    idle, cards, months = set(not_traveled), set(card_dates), []
+    month = first.replace(day=1)
+    while month <= last:
+        days = []
+        for n in range(1, calendar.monthrange(month.year, month.month)[1] + 1):
+            date = month.replace(day=n)
+            state = 'idle' if date in idle else 'traveled' if first <= date <= last else 'out'
+            days.append({'date': date, 'state': state, 'card': date in cards})
+        months.append({
+            'month': month,
+            'days': days,
+            'idle': sum(d['state'] == 'idle' for d in days),
+            'period_days': sum(d['state'] != 'out' for d in days),
+        })
+        month = (month + dt.timedelta(days=31)).replace(day=1)
+    return months
+
+
 def _timeline(record, not_traveled):
     """The record's days newest first, with a "no travel" item for each run of dates in between
     that has no day of its own (a parking-only day keeps its day card)."""
@@ -263,6 +287,7 @@ def driver_travel_record(request, name):
         period_days=(last - first).days + 1 if first else 0,
         days_traveled=(last - first).days + 1 - len(not_traveled) if first else 0,
         not_traveled=excel_log.date_ranges(not_traveled),
+        idle_calendar=_idle_calendar(first, last, not_traveled, [day.date for day in record.days]),
         days_not_traveled=len(not_traveled),
         all_legs=len(driver.trips),
         vehicles=[log.vehicle(plate) for plate in record.plates],
