@@ -75,7 +75,10 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
   font-size: 13px; text-decoration: none; color: var(--text);
   border: 1px solid var(--border); border-radius: 999px; padding: 3px 12px;
 }
-.presets a.active { background: var(--primary-soft); border-color: var(--link); color: var(--link); font-weight: 600; }
+.presets a.no-trips { color: var(--muted); border-style: dashed; }  /* a month with no trips */
+.presets a.active { background: var(--primary-soft); border-color: var(--link); color: var(--link); font-weight: 600; border-style: solid; }
+.presets-year { align-self: center; min-width: 40px; font-size: 13px; font-weight: 600; color: var(--muted); }
+.presets.months { margin-top: -6px; }  /* month rows sit closer to the presets above than the form's gap */
 
 /* Messages */
 .alert, .notice {

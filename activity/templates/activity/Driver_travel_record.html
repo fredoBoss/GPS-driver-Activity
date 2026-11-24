@@ -55,6 +55,7 @@
       <nav class="presets" aria-label="Date presets">
         {% for p in presets %}<a href="?{{ p.query }}"{% if p.active %} class="active" aria-current="true"{% endif %}>{{ p.label }}</a>{% endfor %}
       </nav>
+      {% include "activity/_month_presets.html" %}
     </form>
 
     {% for message in messages %}<p class="message message-{{ message.tags }}" role="status">{{ message }}</p>{% endfor %}
