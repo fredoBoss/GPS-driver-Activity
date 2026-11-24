@@ -230,34 +230,58 @@ class ViewTests(WorkbookTestCase):
         self.assertEqual([d.date for d in response.context['days']], [D2])
 
     def test_month_quick_filters(self):
+        today = dt.date.today()
         response = self.client.get(reverse('activity:drivers_activity'), {'q': 'a'})
-        october = next(m for y in response.context['months'] if y['year'] == 2026
-                       for m in y['months'] if m['label'] == 'Oct')
+        self.assertEqual(response.context['months']['year'], today.year)  # the current year by default
+        response = self.client.get(reverse('activity:drivers_activity'), {'q': 'a', 'year': '2026'})
+        months = response.context['months']
+        october = next(m for m in months['months'] if m['label'] == 'Oct')
         self.assertEqual((october['legs'], october['active']), (5, False))
         self.assertEqual(october['query'], 'q=a&start=2026-10-01&end=2026-10-31')  # keeps the search
+        self.assertEqual(months['whole_year']['query'], 'q=a&start=2026-01-01&end=2026-12-31')
+        self.assertIn({'year': 2026, 'selected': True, 'query': 'q=a&year=2026'}, months['years'])
         response = self.client.get(reverse('activity:drivers_activity'), {'start': '2026-10-01', 'end': '2026-10-31'})
         self.assertContains(response, 'class="active" aria-current="true" title="October 2026: 5 trip legs">Oct</a>')
         self.assertContains(response, 'class=" no-trips" title="September 2026: no trips">Sep</a>')
+        self.assertContains(response, '<option value="?start=2026-10-01&amp;end=2026-10-31&amp;year=2026" selected>2026</option>')
+        self.assertContains(response, 'title="January 1 – December 31, 2026: 5 trip legs">Whole year</a>')
         url = reverse('activity:driver_travel_record', kwargs={'name': 'Mark Reyes'})
         response = self.client.get(url, {'start': '2026-10-01', 'end': '2026-10-31'})
         self.assertContains(response, 'title="October 2026: 4 trip legs">Oct</a>')  # this driver's trips only
         self.assertEqual([d.date for d in response.context['days']], [D2, D1])
 
-    def test_month_presets_run_from_january_of_the_first_year_to_this_month(self):
-        from .views import _month_presets
+    def test_month_filters_show_the_current_year_unless_another_is_picked(self):
+        from .views import _month_filters
         today = dt.date.today()
         y = today.year - 1
-        years = _month_presets([dt.date(y, 3, 5), dt.date(y, 3, 9)], dt.date(y, 3, 1), dt.date(y, 3, 31))
-        self.assertEqual([row['year'] for row in years], [today.year, y])  # newest year first
-        self.assertEqual(len(years[0]['months']), today.month)
-        months = years[1]['months']
+        trips = [dt.date(y, 3, 5), dt.date(y, 3, 9)]
+        shown = _month_filters(trips, None, None)
+        self.assertEqual(shown['year'], today.year)
+        self.assertEqual([(row['year'], row['selected']) for row in shown['years']],
+                         [(today.year, True), (y, False)])  # newest first
+        self.assertEqual(len(shown['months']), today.month)  # up to this month
+        for picked in ('1999', 'soon', '-1', '9' * 5000):  # not a year with trips, or not a number
+            self.assertEqual(_month_filters(trips, None, None, picked)['year'], today.year)
+
+        shown = _month_filters(trips, None, None, str(y), keep={'q': 'a'})
+        months = shown['months']
         self.assertEqual([m['label'] for m in months], [f'{dt.date(2000, i, 1):%b}' for i in range(1, 13)])
         self.assertEqual([m['legs'] for m in months[:4]], [0, 0, 2, 0])
-        self.assertEqual([m['active'] for m in months[:4]], [False, False, True, False])
         self.assertEqual(months[1]['query'], f'start={y}-02-01&end={y}-02-{28 + calendar.isleap(y)}')
-        # A trip dated after this month adds the months up to it.
-        years = _month_presets([dt.date(today.year + 1, 2, 3)], None, None)
-        self.assertEqual([(row['year'], len(row['months'])) for row in years], [(today.year + 1, 2), (today.year, 12)])
+        self.assertEqual(shown['whole_year']['legs'], 2)
+        self.assertEqual([row['query'] for row in shown['years']], [f'q=a&year={today.year}', f'q=a&year={y}'])
+
+        # Dates within one year show that year, so the chosen month or whole year stays in view.
+        shown = _month_filters(trips, dt.date(y, 3, 1), dt.date(y, 3, 31))
+        self.assertEqual((shown['year'], [m['active'] for m in shown['months'][:4]]), (y, [False, False, True, False]))
+        shown = _month_filters(trips, dt.date(y, 1, 1), dt.date(y, 12, 31))
+        self.assertTrue(shown['whole_year']['active'])
+        self.assertEqual(_month_filters(trips, dt.date(y, 12, 28), dt.date(today.year, 1, 3))['year'], today.year)
+
+        # A trip dated after this month adds its year and the months up to it.
+        shown = _month_filters([dt.date(today.year + 1, 2, 3)], None, None, str(today.year + 1))
+        self.assertEqual([row['year'] for row in shown['years']], [today.year + 1, today.year])
+        self.assertEqual(len(shown['months']), 2)
 
     def test_unknown_driver_is_404(self):
         response = self.client.get(reverse('activity:driver_travel_record', kwargs={'name': 'Nobody'}))
