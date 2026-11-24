@@ -97,7 +97,7 @@ a.btn { display: inline-flex; align-items: center; text-decoration: none; }
 }
 .idle-days li a { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: inherit; text-decoration: none; }
 .idle-days li a:hover { text-decoration: underline; }
-.idle-days li.idle { background: var(--warn); border-color: var(--warn); color: #fff; font-weight: 700; }
+.idle-days li.idle { background: var(--danger); border-color: var(--danger); color: #fff; font-weight: 700; }
 .idle-days li.out { background: transparent; border-style: dashed; color: var(--muted); opacity: .55; }
 
 /* Messages */
