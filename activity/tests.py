@@ -250,6 +250,47 @@ class ViewTests(WorkbookTestCase):
         self.assertContains(response, 'title="October 2026: 4 trip legs">Oct</a>')  # this driver's trips only
         self.assertEqual([d.date for d in response.context['days']], [D2, D1])
 
+    def test_travel_record_shows_each_month_day_1_to_the_last_day(self):
+        # The log runs Oct 1–2; Ana Cruz traveled on Oct 1 only.
+        url = reverse('activity:driver_travel_record', kwargs={'name': 'Ana Cruz'})
+        response = self.client.get(url)
+        [october] = response.context['idle_calendar']
+        self.assertEqual((october['month'], october['idle'], october['period_days']), (D1, 1, 2))
+        self.assertEqual([d['date'].day for d in october['days']], list(range(1, 32)))
+        self.assertEqual([d['state'] for d in october['days'][:3]], ['traveled', 'idle', 'out'])
+        self.assertContains(response, '<strong>October 2026</strong> · 1 of 2 days not traveled')
+        self.assertContains(response, '<li class="traveled" title="Thu, Oct 1: traveled"><a href="#2026-10-01">1</a></li>')
+        self.assertContains(response, '<li class="idle" title="Fri, Oct 2: no trip">2</li>')
+        self.assertContains(response, '<li class="out" title="Sat, Oct 31: outside the period">31</li>')
+        self.assertContains(response, 'id="2026-10-01"')  # the day card the date links to
+        url = reverse('activity:driver_travel_record', kwargs={'name': 'Mark Reyes'})
+        self.assertNotContains(self.client.get(url), 'class="idle-days"')  # traveled every day
+
+    def test_idle_calendar_runs_across_months_and_years(self):
+        from .views import _idle_calendar
+        months = _idle_calendar(dt.date(2025, 12, 30), dt.date(2026, 2, 2), [dt.date(2025, 12, 31)],
+                                [dt.date(2025, 12, 30)])
+        self.assertEqual([m['month'] for m in months], [dt.date(2025, 12, 1), dt.date(2026, 1, 1), dt.date(2026, 2, 1)])
+        self.assertEqual([len(m['days']) for m in months], [31, 31, 28])
+        self.assertEqual([(m['idle'], m['period_days']) for m in months], [(1, 2), (0, 31), (0, 2)])
+        december = months[0]['days']
+        self.assertEqual([(d['state'], d['card']) for d in december[28:]],
+                         [('out', False), ('traveled', True), ('idle', False)])
+        self.assertEqual(_idle_calendar(None, None, []), [])
+
+    def test_idle_calendar_shows_at_most_the_last_24_months(self):
+        from .views import _idle_calendar
+        months = _idle_calendar(dt.date(1, 1, 1), dt.date(2026, 2, 2), [])
+        self.assertEqual((len(months), months[0]['month'], months[-1]['month']),
+                         (24, dt.date(2024, 3, 1), dt.date(2026, 2, 1)))
+        self.assertEqual([m['month'] for m in _idle_calendar(dt.date(1, 1, 1), dt.date(1, 3, 1), [])],
+                         [dt.date(1, 1, 1), dt.date(1, 2, 1), dt.date(1, 3, 1)])
+        url = reverse('activity:driver_travel_record', kwargs={'name': 'Ana Cruz'})
+        response = self.client.get(url, {'start': '0001-01-01'})
+        self.assertEqual(len(response.context['idle_calendar']), 24)
+        self.assertContains(response, 'Showing the last 24 months of the period')
+        self.assertNotContains(self.client.get(url), 'Showing the last')  # Oct 1–2 fits
+
     def test_month_filters_show_the_current_year_unless_another_is_picked(self):
         from .views import _month_filters
         today = dt.date.today()

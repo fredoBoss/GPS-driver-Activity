@@ -74,11 +74,23 @@
     </section>
 
     {% if days_not_traveled %}
-      <p class="idle-summary">
-        Did not travel on <strong>{{ days_not_traveled }} of {{ period_days }} day{{ period_days|pluralize }}</strong>
-        ({{ period_first|date:"M j, Y" }} – {{ period_last|date:"M j, Y" }}):
-        {% for first, last, count in not_traveled %}{{ first|date:"M j" }}{% if last != first %} – {{ last|date:"M j" }}{% endif %} ({{ count }} day{{ count|pluralize }}){% if not forloop.last %}, {% endif %}{% endfor %}.
-      </p>
+      {# Each month of the period from the 1st to its last day; the days with no trip are highlighted. #}
+      <div class="idle-summary">
+        <p class="idle-head">
+          Did not travel on <strong>{{ days_not_traveled }} of {{ period_days }} day{{ period_days|pluralize }}</strong>
+          ({{ period_first|date:"M j, Y" }} – {{ period_last|date:"M j, Y" }}).
+          <span class="idle-key">Highlighted days had no trip. Click a date to go to that day.</span>
+          {% if idle_calendar.0.month > period_first %}<span class="idle-key">Showing the last {{ idle_calendar|length }} months of the period; pick a shorter date range to see earlier months.</span>{% endif %}
+        </p>
+        {% for m in idle_calendar %}
+          <div class="idle-month">
+            <div class="idle-month-name"><strong>{{ m.month|date:"F Y" }}</strong> · {{ m.idle }} of {{ m.period_days }} day{{ m.period_days|pluralize }} not traveled</div>
+            <ol class="idle-days" aria-label="{{ m.month|date:'F Y' }}">
+              {% for d in m.days %}<li class="{{ d.state }}" title="{{ d.date|date:'D, M j' }}: {% if d.state == 'idle' %}no trip{% elif d.state == 'traveled' %}traveled{% else %}outside the period{% endif %}">{% if d.card %}<a href="#{{ d.date|date:'Y-m-d' }}">{{ d.date.day }}</a>{% else %}{{ d.date.day }}{% endif %}</li>{% endfor %}
+            </ol>
+          </div>
+        {% endfor %}
+      </div>
     {% endif %}
 
     {% if not days %}
@@ -95,7 +107,7 @@
         <span>{{ item.days }} day{{ item.days|pluralize }} without a trip</span>
       </div>
       {% else %}{% with day=item.day %}
-      <section class="card" aria-label="{{ day.date|date:'l, M j, Y' }}">
+      <section class="card" id="{{ day.date|date:'Y-m-d' }}" aria-label="{{ day.date|date:'l, M j, Y' }}">
         <div class="day-head">
           <div>
             <h2>{{ day.date|date:"D, M j, Y" }}</h2>
