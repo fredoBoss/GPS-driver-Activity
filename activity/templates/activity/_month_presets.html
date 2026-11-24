@@ -1,9 +1,14 @@
 {% load activity_extras %}{% comment %}
-  One quick filter per month (1st to last day), a row per year. Months without trips are dimmed.
-  Used inside the filter forms of both pages; `months` comes from views._month_presets.
-{% endcomment %}{% for y in months %}
-<nav class="presets months" aria-label="Months of {{ y.year }}">
-  <span class="presets-year">{{ y.year }}</span>
-  {% for m in y.months %}<a href="?{{ m.query }}"{% if m.active or not m.legs %} class="{% if m.active %}active{% endif %}{% if not m.legs %} no-trips{% endif %}"{% endif %}{% if m.active %} aria-current="true"{% endif %} title="{{ m.name }}: {% if m.legs %}{{ m.legs|number }} trip leg{{ m.legs|pluralize }}{% else %}no trips{% endif %}">{{ m.label }}</a>{% endfor %}
+  The year dropdown (the current year unless another is picked) and that year's quick filters:
+  the whole year, then one per month (1st to last day). Months without trips are dimmed.
+  Used inside the filter forms of both pages; `months` comes from views._month_filters. The
+  dropdown has no name, so Apply does not send it: it only changes which year's months are shown.
+{% endcomment %}{% if months %}
+<nav class="presets months" aria-label="Months">
+  <select class="year-select" aria-label="Year" title="Show the months of another year" onchange="location.href = this.value">
+    {% for y in months.years %}<option value="?{{ y.query }}"{% if y.selected %} selected{% endif %}>{{ y.year }}</option>{% endfor %}
+  </select>
+  {% with m=months.whole_year %}<a href="?{{ m.query }}"{% if m.active or not m.legs %} class="{% if m.active %}active{% endif %}{% if not m.legs %} no-trips{% endif %}"{% endif %}{% if m.active %} aria-current="true"{% endif %} title="{{ m.name }}: {% if m.legs %}{{ m.legs|number }} trip leg{{ m.legs|pluralize }}{% else %}no trips{% endif %}">{{ m.label }}</a>{% endwith %}
+  {% for m in months.months %}<a href="?{{ m.query }}"{% if m.active or not m.legs %} class="{% if m.active %}active{% endif %}{% if not m.legs %} no-trips{% endif %}"{% endif %}{% if m.active %} aria-current="true"{% endif %} title="{{ m.name }}: {% if m.legs %}{{ m.legs|number }} trip leg{{ m.legs|pluralize }}{% else %}no trips{% endif %}">{{ m.label }}</a>{% endfor %}
 </nav>
-{% endfor %}
+{% endif %}
