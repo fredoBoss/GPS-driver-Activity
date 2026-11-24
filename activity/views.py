@@ -1,4 +1,6 @@
+import calendar
 import datetime as dt
+from collections import Counter
 from urllib.parse import urlencode
 
 from django.conf import settings
@@ -35,6 +37,14 @@ def _date_range(request):
     return start, end, notices
 
 
+def _preset(label, p_start, p_end, start, end, extra=None):
+    """A quick-filter link for the dates `p_start`–`p_end` (None = all dates), keeping `extra` params."""
+    params = dict(extra or {})
+    if p_start:
+        params.update(start=p_start.isoformat(), end=p_end.isoformat())
+    return {'label': label, 'query': urlencode(params), 'active': (p_start, p_end) == (start, end)}
+
+
 def _presets(start, end, extra=None):
     today = dt.date.today()
     ranges = [
@@ -43,17 +53,29 @@ def _presets(start, end, extra=None):
         ('Last 7 days', today - dt.timedelta(days=6), today),
         ('This month', today.replace(day=1), today),
     ]
-    presets = []
-    for label, p_start, p_end in ranges:
-        params = dict(extra or {})
-        if p_start:
-            params.update(start=p_start.isoformat(), end=p_end.isoformat())
-        presets.append({
-            'label': label,
-            'query': urlencode(params),
-            'active': (p_start, p_end) == (start, end),
-        })
-    return presets
+    return [_preset(label, p_start, p_end, start, end, extra) for label, p_start, p_end in ranges]
+
+
+def _month_presets(trip_dates, start, end, extra=None):
+    """One quick filter per calendar month (the 1st to the last day), a row per year, newest year
+    first. The months run from January of the first year with trips to the current month, or to
+    the last month with trips if that is later. Each month carries its number of trip legs so the
+    page can dim the months without trips."""
+    today = dt.date.today()
+    legs = Counter((d.year, d.month) for d in trip_dates)
+    first_year = min([today.year, *(year for year, _ in legs)])
+    last_year, last_month = max([(today.year, today.month), *legs])
+    years = []
+    for year in range(last_year, first_year - 1, -1):
+        months = []
+        for month in range(1, (last_month if year == last_year else 12) + 1):
+            first_day = dt.date(year, month, 1)
+            last_day = first_day.replace(day=calendar.monthrange(year, month)[1])
+            preset = _preset(f'{first_day:%b}', first_day, last_day, start, end, extra)
+            preset.update(name=f'{first_day:%B %Y}', legs=legs[year, month])
+            months.append(preset)
+        years.append({'year': year, 'months': months})
+    return years
 
 
 def _filter_query(start, end, q='', sort=DEFAULT_SORT):
@@ -166,6 +188,8 @@ def drivers_activity(request):
     drivers = [row[0] for row in rows]
     context.update(
         log=log,
+        months=_month_presets([leg.date for d in log.drivers for leg in d.trips], start, end,
+                              {'q': q} if q else None),
         rows=rows,
         period_first=first,
         period_last=last,
@@ -206,6 +230,7 @@ def driver_travel_record(request, name):
     not_traveled = _days_not_traveled(driver, first, last)
     context.update(
         log=log,
+        months=_month_presets([leg.date for leg in driver.trips], start, end),
         driver=record,
         days=list(reversed(record.days)),
         timeline=_timeline(record, not_traveled),

@@ -1,0 +1,9 @@
+{% load activity_extras %}{% comment %}
+  One quick filter per month (1st to last day), a row per year. Months without trips are dimmed.
+  Used inside the filter forms of both pages; `months` comes from views._month_presets.
+{% endcomment %}{% for y in months %}
+<nav class="presets months" aria-label="Months of {{ y.year }}">
+  <span class="presets-year">{{ y.year }}</span>
+  {% for m in y.months %}<a href="?{{ m.query }}"{% if m.active or not m.legs %} class="{% if m.active %}active{% endif %}{% if not m.legs %} no-trips{% endif %}"{% endif %}{% if m.active %} aria-current="true"{% endif %} title="{{ m.name }}: {% if m.legs %}{{ m.legs|number }} trip leg{{ m.legs|pluralize }}{% else %}no trips{% endif %}">{{ m.label }}</a>{% endfor %}
+</nav>
+{% endfor %}
