@@ -80,6 +80,7 @@
           Did not travel on <strong>{{ days_not_traveled }} of {{ period_days }} day{{ period_days|pluralize }}</strong>
           ({{ period_first|date:"M j, Y" }} – {{ period_last|date:"M j, Y" }}).
           <span class="idle-key">Highlighted days had no trip. Click a date to go to that day.</span>
+          {% if idle_calendar.0.month > period_first %}<span class="idle-key">Showing the last {{ idle_calendar|length }} months of the period; pick a shorter date range to see earlier months.</span>{% endif %}
         </p>
         {% for m in idle_calendar %}
           <div class="idle-month">

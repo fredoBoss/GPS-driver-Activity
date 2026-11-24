@@ -18,6 +18,7 @@ XLSX = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 SORTS = {'name': 'Name (A–Z)', 'added': 'Date added (newest first)'}
 DEFAULT_SORT = 'name'
 SORT_COOKIE = 'driver_sort'  # remembers the choice, e.g. after opening a driver and coming back
+CALENDAR_MONTHS = 24  # the travel record's "did not travel" calendar shows at most this many months
 
 
 def _date_range(request):
@@ -151,11 +152,16 @@ def _days_not_traveled(driver, first, last):
 def _idle_calendar(first, last, not_traveled, card_dates=()):
     """The months from `first` to `last`, each with all its days (1 to 28–31): state 'idle' for a
     day not traveled, 'traveled' for the other days of the period, 'out' for the days outside it.
-    `card` marks the days that have a day card on the page to jump to."""
+    `card` marks the days that have a day card on the page to jump to.
+
+    Only the last CALENDAR_MONTHS months are built, so a far-off ?start= (year 1, say) cannot
+    make the page list every day since then; the page says when months were left out.
+    """
     if first is None:
         return []
     idle, cards, months = set(not_traveled), set(card_dates), []
-    month = first.replace(day=1)
+    earliest = max(last.year * 12 + last.month - CALENDAR_MONTHS, 12)  # months since year 0; 12 = Jan of year 1
+    month = max(first.replace(day=1), dt.date(earliest // 12, earliest % 12 + 1, 1))
     while month <= last:
         days = []
         for n in range(1, calendar.monthrange(month.year, month.month)[1] + 1):
@@ -187,8 +193,8 @@ def _timeline(record, not_traveled):
             items.append({'gap': True, 'first': gap[-1], 'last': gap[0], 'days': len(gap)})
             gap.clear()
 
-    date = newest
-    while date >= oldest:
+    for offset in range((newest - oldest).days + 1):  # no step below the oldest day: Jan 1 of year 1 is date.min
+        date = newest - dt.timedelta(days=offset)
         if date in by_date:
             close_gap()
             items.append({'day': by_date[date]})
@@ -196,7 +202,6 @@ def _timeline(record, not_traveled):
             gap.append(date)
         else:  # e.g. the arrival day of a trip past midnight
             close_gap()
-        date -= dt.timedelta(days=1)
     close_gap()
     return items
 

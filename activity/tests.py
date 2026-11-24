@@ -278,6 +278,19 @@ class ViewTests(WorkbookTestCase):
                          [('out', False), ('traveled', True), ('idle', False)])
         self.assertEqual(_idle_calendar(None, None, []), [])
 
+    def test_idle_calendar_shows_at_most_the_last_24_months(self):
+        from .views import _idle_calendar
+        months = _idle_calendar(dt.date(1, 1, 1), dt.date(2026, 2, 2), [])
+        self.assertEqual((len(months), months[0]['month'], months[-1]['month']),
+                         (24, dt.date(2024, 3, 1), dt.date(2026, 2, 1)))
+        self.assertEqual([m['month'] for m in _idle_calendar(dt.date(1, 1, 1), dt.date(1, 3, 1), [])],
+                         [dt.date(1, 1, 1), dt.date(1, 2, 1), dt.date(1, 3, 1)])
+        url = reverse('activity:driver_travel_record', kwargs={'name': 'Ana Cruz'})
+        response = self.client.get(url, {'start': '0001-01-01'})
+        self.assertEqual(len(response.context['idle_calendar']), 24)
+        self.assertContains(response, 'Showing the last 24 months of the period')
+        self.assertNotContains(self.client.get(url), 'Showing the last')  # Oct 1–2 fits
+
     def test_month_filters_show_the_current_year_unless_another_is_picked(self):
         from .views import _month_filters
         today = dt.date.today()
