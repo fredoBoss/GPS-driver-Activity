@@ -218,7 +218,7 @@ class ViewTests(WorkbookTestCase):
         response = self.client.get(url)
         self.assertEqual(response.status_code, 200)
         self.assertTemplateUsed(response, 'activity/Driver_travel_record.html')
-        self.assertEqual([d.date for d in response.context['days']], [D2, D1])  # newest first
+        self.assertEqual([d.date for d in response.context['days']], [D1, D2])  # oldest first
         for text in ('Customer B', '8:05 AM', '11:50 AM', '01:15:00 <span class="pill pill-danger">LONG STAY',
                      'Long stay = 00:30:00', 'Isuzu Elf', '9171234567'):
             self.assertContains(response, text)
@@ -248,7 +248,20 @@ class ViewTests(WorkbookTestCase):
         url = reverse('activity:driver_travel_record', kwargs={'name': 'Mark Reyes'})
         response = self.client.get(url, {'start': '2026-10-01', 'end': '2026-10-31'})
         self.assertContains(response, 'title="October 2026: 4 trip legs">Oct</a>')  # this driver's trips only
-        self.assertEqual([d.date for d in response.context['days']], [D2, D1])
+        self.assertEqual([d.date for d in response.context['days']], [D1, D2])
+
+    def test_travel_record_lists_the_days_oldest_first(self):
+        sep = lambda day: dt.date(2026, 9, day)
+        path = self.build([(sep(1), 'Leo Tan', 'LT 1', 'Warehouse', T(8, 0), 'Customer A', T(9, 0)),
+                           (sep(4), 'Leo Tan', 'LT 1', 'Customer A', T(8, 0), 'Warehouse', T(9, 0))])
+        with override_settings(ACTIVITY_LOG_PATH=path):
+            response = self.client.get(reverse('activity:driver_travel_record', kwargs={'name': 'Leo Tan'}))
+        timeline = [('gap', item['first'], item['last'], item['days']) if item.get('gap') else ('day', item['day'].date)
+                    for item in response.context['timeline']]
+        self.assertEqual(timeline, [('day', sep(1)), ('gap', sep(2), sep(3), 2), ('day', sep(4))])  # day 1 first
+        html = response.content.decode()
+        self.assertLess(html.index('Tue, Sep 1, 2026'), html.index('Wed, Sep 2 – Thu, Sep 3'))
+        self.assertLess(html.index('Wed, Sep 2 – Thu, Sep 3'), html.index('Fri, Sep 4, 2026'))
 
     def test_travel_record_shows_each_month_day_1_to_the_last_day(self):
         # The log runs Oct 1–2; Ana Cruz traveled on Oct 1 only.

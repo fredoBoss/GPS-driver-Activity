@@ -179,8 +179,9 @@ def _idle_calendar(first, last, not_traveled, card_dates=()):
 
 
 def _timeline(record, not_traveled):
-    """The record's days newest first, with a "no travel" item for each run of dates in between
-    that has no day of its own (a parking-only day keeps its day card)."""
+    """The record's days oldest first (day 1 at the top, the 31st at the bottom), with a "no travel"
+    item for each run of dates in between that has no day of its own (a parking-only day keeps its
+    day card)."""
     if not record.days:
         return []
     by_date, idle = {day.date: day for day in record.days}, set(not_traveled)
@@ -190,11 +191,11 @@ def _timeline(record, not_traveled):
 
     def close_gap():
         if gap:
-            items.append({'gap': True, 'first': gap[-1], 'last': gap[0], 'days': len(gap)})
+            items.append({'gap': True, 'first': gap[0], 'last': gap[-1], 'days': len(gap)})
             gap.clear()
 
-    for offset in range((newest - oldest).days + 1):  # no step below the oldest day: Jan 1 of year 1 is date.min
-        date = newest - dt.timedelta(days=offset)
+    for offset in range((newest - oldest).days + 1):
+        date = oldest + dt.timedelta(days=offset)
         if date in by_date:
             close_gap()
             items.append({'day': by_date[date]})
@@ -285,7 +286,7 @@ def driver_travel_record(request, name):
         months=_month_filters([leg.date for leg in driver.trips], start, end,
                               request.GET.get('year', ''), keep=_filter_params(start, end)),
         driver=record,
-        days=list(reversed(record.days)),
+        days=record.days,  # oldest first, like the timeline
         timeline=_timeline(record, not_traveled),
         period_first=first,
         period_last=last,
