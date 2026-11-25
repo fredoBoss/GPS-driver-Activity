@@ -390,6 +390,13 @@ class TravelReportTests(SimpleTestCase):
     def test_device_names(self):
         self.assertEqual(sinotrack.parse_device_name(GONZAGA), ('T05', 'RJP 162', 'Gonzaga'))
         self.assertEqual(sinotrack.parse_device_name('Truck 9'), ('', 'Truck 9', ''))
+        self.assertEqual(sinotrack.parse_device_name('T06_RLR 795 Capoy'), ('T06', 'RLR 795', 'Capoy'))
+        # A dash missing a space on one side or both, as in Lubang's exports.
+        for name in ('T23_NFY 7549- Lubang', 'T23_NFY 7549 -Lubang', 'T23_NFY 7549-Lubang', 'T23_NFY7549 - Lubang'):
+            self.assertEqual(sinotrack.parse_device_name(name)[2], 'Lubang', name)
+        self.assertEqual(sinotrack.parse_device_name('T23_NFY 7549- Lubang'), ('T23', 'NFY 7549', 'Lubang'))
+        # A dash inside the plate stays in the plate.
+        self.assertEqual(sinotrack.parse_device_name('T01_ABC-1234 - Juan'), ('T01', 'ABC-1234', 'Juan'))
 
     def test_rejects_other_csv(self):
         with self.assertRaisesMessage(sinotrack.ReportError, 'SinoTrack Travel Report'):
