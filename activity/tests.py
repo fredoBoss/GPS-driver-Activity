@@ -461,6 +461,15 @@ class ImportTests(WorkbookTestCase):
         self.assertEqual(result.drivers, ['Juan'])
         self.assertIn('CCE 8051 was driven by SABIGAN before', ' '.join(result.warnings))
 
+    def test_rows_holding_the_device_name_count_as_the_plate_and_are_corrected(self):
+        # Imported before "T05_RJP 162 - Gonzaga" could be read: the whole name is in Plate No.
+        path = self.build([(dt.date(2026, 9, 1), 'Gonzaga', GONZAGA, 'Hagonoy Road', T(8, 0),
+                            'Digos Diversion Road', T(8, 20))], formula_rows=10)
+        result = log_writer.import_trips(path, self.trips())
+        self.assertEqual((result.added, result.duplicates), (2, 1))  # the first trip is not added again
+        self.assertIn('Corrected 1 older row of RJP 162', ' '.join(result.warnings))
+        self.assertEqual(load_workbook(path)['Activity Log']['C5'].value, 'RJP 162')
+
     def test_reimport_skips_trips_already_in_the_log(self):
         path = self.build([], formula_rows=5)
         log_writer.import_trips(path, self.trips())
@@ -609,6 +618,39 @@ class ParkReportTests(SimpleTestCase):
 class ParkMergeTests(WorkbookTestCase):
     def parks(self):
         return sinotrack.parse_park_report(sinotrack_park_csv(GONZAGA_PARKS))[0]
+
+    def test_parking_rows_holding_the_device_name_are_corrected_on_upload(self):
+        # SABIGAN's trip, and an older parking-only row imported as driver "Sebigan", plate = device name.
+        oct1 = dt.date(2026, 10, 1)
+        path = self.build([
+            (oct1, 'SABIGAN', 'CCE 8051', 'A', T(9, 0), 'B', T(9, 30)),
+            (oct1, 'Sebigan', 'CCE 8051 - Sebigan', None, None, None, None, 1, dt.timedelta(minutes=20),
+             'Old stop', '7.4, 125.8'),
+        ], header=PARK_LOG_HEADER, drivers=[('SABIGAN', '')], vehicles=[('CCE 8051 - Sebigan', '', '')])
+        parks = sinotrack.parse_park_report(sinotrack_park_csv([
+            ('CCE 8051 - Sebigan', '2026-10-01 09:30:00', '2026-10-01 09:50:00', 'Warehouse', '125.8', '7.4')]))[0]
+        result = log_writer.merge_parks(path, parks)
+        self.assertEqual((result.matched, result.rows, result.cleared_rows), (1, [5], [6]))
+        self.assertIn('Corrected 1 older row of CCE 8051', ' '.join(result.warnings))
+        log = excel_log.load(path)
+        self.assertEqual([(d.name, d.plates) for d in log.drivers], [('SABIGAN', ['CCE 8051'])])
+        self.assertEqual(load_workbook(path)['Lists']['D7'].value, 'CCE 8051')
+
+    def test_a_second_parking_row_for_the_day_is_cleared(self):
+        # Oct 1 has two parking-only rows once the old one counts as NFY 7549; the stop goes on one.
+        oct1 = dt.date(2026, 10, 1)
+        old = (oct1, 'Lubang', 'T23_NFY 7549- Lubang', None, None, None, None, 1, dt.timedelta(minutes=5), 'X', '7.4, 125.8')
+        new = (oct1, 'Lubang', 'NFY 7549', None, None, None, None, 1, dt.timedelta(minutes=5), 'X', '7.4, 125.8')
+        path = self.build([old, new], header=PARK_LOG_HEADER, drivers=[('Lubang', '')],
+                          vehicles=[('T23_NFY 7549- Lubang', '', ''), ('NFY 7549', '', '')])
+        parks = sinotrack.parse_park_report(sinotrack_park_csv([
+            ('T23_NFY 7549- Lubang', '2026-10-01 07:00:00', '2026-10-01 07:05:00', 'X', '125.8', '7.4')]))[0]
+        result = log_writer.merge_parks(path, parks)
+        self.assertEqual((result.parking_only_rows, result.cleared_rows), ([5], [6]))
+        day = excel_log.load(path).find_driver('Lubang').legs
+        self.assertEqual([(leg.plate, leg.park_count) for leg in day], [('NFY 7549', 1)])
+        lists = load_workbook(path)['Lists']
+        self.assertEqual((lists['D7'].value, lists['D8'].value), (None, 'NFY 7549'))  # old plate cleared
 
     def test_stops_merge_into_the_trip_they_belong_to(self):
         path = self.build(GONZAGA_LOG_ROWS, header=PARK_LOG_HEADER)

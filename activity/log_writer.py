@@ -20,7 +20,7 @@ import datetime as dt
 import difflib
 import os
 import shutil
-from collections import OrderedDict, defaultdict
+from collections import Counter, OrderedDict, defaultdict
 from copy import copy
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,7 +31,7 @@ from openpyxl.formula.translate import Translator
 from openpyxl.utils.datetime import to_excel
 from openpyxl.worksheet.cell_range import CellRange
 
-from . import excel_com, excel_log
+from . import excel_com, excel_log, sinotrack
 from .excel_log import ActivityLogError
 
 FIRST_ROW = excel_log.LOG_HEADER_ROW + 1
@@ -148,6 +148,61 @@ def _log_columns(snapshot, path, required):
 TRIP_COORDINATE_FIELDS = ('origin_coordinates', 'destination_coordinates')
 
 
+def _plate_key(value):
+    """The plate a Plate No. cell names, casefolded. Rows imported before their device name could be
+    read hold the whole name ("CCE 8051 - Sebigan"); they count as that plate ("cce 8051")."""
+    text = excel_log.as_text(value)
+    _, plate, driver = sinotrack.parse_device_name(text)
+    return (plate if driver else text).casefold()
+
+
+def _is_device_name(value):
+    text = excel_log.as_text(value)
+    return bool(text) and _plate_key(text) != text.casefold()
+
+
+def _plan_device_name_rows(snapshot, cols, plates, names, plan, result):
+    """Correct the rows of this import's plates that were imported before their device name could be
+    read: the plate cell holds the whole device name and the driver SinoTrack's spelling. They get
+    the plate and the workbook's spelling of the driver ("Sebigan" -> "SABIGAN"), and the Lists
+    sheet gets the plate too. Returns {row: driver} of the corrected rows."""
+    spelled = {p.casefold(): p for p in plates if p}
+    corrected, counts = {}, Counter()
+
+    def get(values, name):
+        i = cols.get(name)
+        return values[i] if i is not None and i < len(values) else None
+
+    for row_no, values in enumerate(snapshot.log_rows, start=FIRST_ROW):
+        text = get(values, 'plate')
+        if not _is_device_name(text) or _plate_key(text) not in spelled:
+            continue
+        plate = spelled[_plate_key(text)]
+        plan.log_cells[(row_no, cols['plate'] + 1)] = plate
+        old, date = excel_log.as_text(get(values, 'driver')), excel_log.to_date(get(values, 'date'))
+        driver = names.resolve(old, plate, date, result) if old and date else old
+        if driver != old:
+            plan.log_cells[(row_no, cols['driver'] + 1)] = driver
+        corrected[row_no] = driver
+        counts[plate] += 1
+
+    lists_cols = excel_log.match_headers(snapshot.lists_header, excel_log.LISTS_HEADERS)
+    if counts and 'plate' in lists_cols:
+        i = lists_cols['plate']
+        texts = [excel_log.as_text(v[i] if i < len(v) else None) for v in snapshot.lists_rows]
+        present = {t.casefold() for t in texts if t and not _is_device_name(t)}
+        for row, text in enumerate(texts, start=LISTS_FIRST_ROW):
+            if _is_device_name(text) and _plate_key(text) in spelled:
+                key = _plate_key(text)
+                plan.list_cells[(row, i + 1)] = None if key in present else spelled[key]
+                present.add(key)
+
+    for plate, n in counts.items():
+        result.warnings.append(f'Corrected {n} older row{"s" * (n != 1)} of {plate}: they held the whole '
+                               'SinoTrack device name as the plate.')
+    return corrected
+
+
 def _alike(a, b):
     """Two spellings of one name, such as "Sebigan" and "SABIGAN"."""
     return difflib.SequenceMatcher(None, a.casefold(), b.casefold()).ratio() >= 0.75
@@ -170,10 +225,12 @@ class _DriverNames:
             def get(field_name):
                 i = cols.get(field_name)
                 return values[i] if i is not None and i < len(values) else None
+            if _is_device_name(get('plate')):  # SinoTrack's spelling, not the workbook's
+                continue
             name, date = excel_log.as_text(get('driver')), excel_log.to_date(get('date'))
             if name and date is not None:
                 self.known.setdefault(name.casefold(), name)
-                self.by_plate[excel_log.as_text(get('plate')).casefold()].append((date, name))
+                self.by_plate[_plate_key(get('plate'))].append((date, name))
 
     def resolve(self, name, plate, date, result):
         """The workbook's spelling of `name` ("Capoy" -> "CAPOY"). A name the workbook does not know
@@ -205,6 +262,7 @@ def _plan_trips(snapshot, trips, driver, plate, path):
 
     result = ImportResult()
     plan = Plan(result, input_cols=sorted(c + 1 for c in cols.values()), table_last=snapshot.table_last)
+    _plan_device_name_rows(snapshot, cols, {plate or t.plate for t in trips}, names, plan, result)
     filled = set()
     row = last_used + 1
     for trip in trips:
@@ -262,7 +320,7 @@ def _plan_trips(snapshot, trips, driver, plate, path):
     if result.added:
         plan.new_rows_until = result.last_row
     if plan.log_cells:
-        plan.list_cells = _plan_list_additions(snapshot, trips, plate, result)
+        plan.list_cells = _plan_list_additions(snapshot, trips, plate, result, plan.list_cells)
     return plan
 
 
@@ -296,24 +354,28 @@ def _plan_parks(snapshot, parks, plate, driver, path):
 
     legs_by_plate = defaultdict(list)
     parking_rows = {}                     # (date, plate) -> (row, values) of parking-only rows in the log
+    extra_parking_rows = []               # (date, plate, row, values) of a second one for that day
     drivers_by_plate = defaultdict(list)  # plate -> [(date, driver)] of the rows in the log
     for row_no, values in enumerate(snapshot.log_rows, start=FIRST_ROW):
         date, depart = excel_log.to_date(get(values, 'date')), excel_log.to_clock(get(values, 'depart'))
         if date is None:
             continue
-        plate_key = excel_log.as_text(get(values, 'plate')).casefold()
+        plate_key = _plate_key(get(values, 'plate'))
         row_driver = excel_log.as_text(get(values, 'driver'))
         if row_driver:
             drivers_by_plate[plate_key].append((date, row_driver))
         if depart is None:
             if all(excel_log.is_blank(get(values, n)) for n in ('arrive', 'origin', 'destination')):
-                parking_rows.setdefault((date, plate_key), (row_no, values))
+                if (date, plate_key) in parking_rows:
+                    extra_parking_rows.append((date, plate_key, row_no, values))
+                else:
+                    parking_rows[(date, plate_key)] = (row_no, values)
             continue
         arrive = excel_log.to_clock(get(values, 'arrive'))
         depart_at = dt.datetime.combine(date, dt.time()) + depart
         arrive_at = depart_at + ((arrive - depart) % excel_log.DAY if arrive is not None else dt.timedelta())
         span = _LegSpan(row_no, date, excel_log.as_text(get(values, 'driver')), depart_at, arrive_at)
-        legs_by_plate[excel_log.as_text(get(values, 'plate')).casefold()].append(span)
+        legs_by_plate[plate_key].append(span)
     for spans in legs_by_plate.values():
         spans.sort(key=lambda s: s.depart)
     departs = {key: [s.depart for s in spans] for key, spans in legs_by_plate.items()}
@@ -348,11 +410,12 @@ def _plan_parks(snapshot, parks, plate, driver, path):
         result.end = max(result.end or date, date)
 
     plan = Plan(result, input_cols=sorted(c + 1 for c in cols.values()), table_last=snapshot.table_last)
+    corrected = _plan_device_name_rows(snapshot, cols, {plate or p.plate for p in parks}, names, plan, result)
     for row, pairs in sorted(by_row.items()):
         _plan_stops(plan, cols, row, [park for _, park in pairs])
         leg = pairs[0][0]
         result.rows.append(row)
-        note(leg.driver, leg.date)
+        note(corrected.get(row, leg.driver), leg.date)
 
     def driver_for(park, date, key):
         if driver:
@@ -369,7 +432,7 @@ def _plan_parks(snapshot, parks, plate, driver, path):
     for (date, key), stops in sorted(loose.items(), key=lambda item: (item[0][1], item[0][0])):
         if (date, key) in parking_rows:
             row, values = parking_rows[(date, key)]
-            row_driver = excel_log.as_text(get(values, 'driver'))
+            row_driver = corrected.get(row, excel_log.as_text(get(values, 'driver')))
         else:
             row, new_row = new_row, new_row + 1
             row_driver = driver_for(stops[0], date, key)
@@ -386,10 +449,13 @@ def _plan_parks(snapshot, parks, plate, driver, path):
     result.parking_only_rows.sort()
     result.parking_only_dates = sorted(set(result.parking_only_dates))
 
-    # Parking-only rows from an earlier merge whose stops now belong to trips: clear them.
-    for (date, key), (row, values) in sorted(parking_rows.items(), key=lambda item: item[1][0]):
+    # Parking-only rows from an earlier merge whose stops now belong to trips, and second parking-only
+    # rows for a day and plate (an older one held the device name as the plate): clear them.
+    clear = [(date, key, row, values, False) for (date, key), (row, values) in parking_rows.items()]
+    clear += [(date, key, row, values, True) for date, key, row, values in extra_parking_rows]
+    for date, key, row, values, extra in sorted(clear, key=lambda item: item[2]):
         first, last = report_days.get(key, (None, None))
-        if (date, key) in loose or first is None or not first <= date <= last:
+        if ((date, key) in loose and not extra) or first is None or not first <= date <= last:
             continue
         filled = [n for n in PARK_FIELDS if not excel_log.is_blank(get(values, n))]
         if not filled:
@@ -430,17 +496,18 @@ def _existing_trips(rows, cols):
             continue
         last_used = row_no
         key = (excel_log.to_date(get(values, 'date')),
-               excel_log.as_text(get(values, 'plate')).casefold(),
+               _plate_key(get(values, 'plate')),
                excel_log.to_clock(get(values, 'depart')),
                excel_log.to_clock(get(values, 'arrive')))
         trips.setdefault(key, (row_no, values))
     return trips, last_used
 
 
-def _plan_list_additions(snapshot, trips, plate, result):
-    """Add new drivers / plates to the Lists sheet (it feeds the dropdowns)."""
+def _plan_list_additions(snapshot, trips, plate, result, cells=None):
+    """Add new drivers / plates to the Lists sheet (it feeds the dropdowns). `cells` are Lists cells
+    already planned (a corrected plate), which count as present."""
     cols = excel_log.match_headers(snapshot.lists_header, excel_log.LISTS_HEADERS)
-    cells = {}
+    cells = dict(cells or {})
 
     def add(field_name, value, vehicle=''):
         if field_name not in cols:
@@ -525,7 +592,7 @@ def _apply_with_openpyxl(path, planner, backup_dir):
         font.color, font.underline = (LINK_FONT_COLOR, 'single') if url else (None, None)
         cell.font = font
     for (row, col), value in plan.list_cells.items():
-        lists.cell(row=row, column=col, value=value)
+        lists.cell(row=row, column=col).value = value  # value None clears the cell (a corrected plate)
 
     plan.result.backup = _backup(path, backup_dir)
     wb.calculation.fullCalcOnLoad = True  # openpyxl drops cached results; Excel recalculates
@@ -636,7 +703,10 @@ def _apply_with_excel(workbook, path, planner, backup_dir):
             elif cell.Hyperlinks.Count:
                 cell.Hyperlinks.Delete()
         for (row, col), value in plan.list_cells.items():
-            lists.Cells(row, col).Value2 = _excel_value(value)
+            if value is None:
+                lists.Cells(row, col).ClearContents()
+            else:
+                lists.Cells(row, col).Value2 = _excel_value(value)
         workbook.Save()
     finally:
         app.ScreenUpdating = screen_updating
