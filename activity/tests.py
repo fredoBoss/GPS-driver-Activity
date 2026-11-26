@@ -397,6 +397,8 @@ class TravelReportTests(SimpleTestCase):
         self.assertEqual(sinotrack.parse_device_name('T23_NFY 7549- Lubang'), ('T23', 'NFY 7549', 'Lubang'))
         # A dash inside the plate stays in the plate.
         self.assertEqual(sinotrack.parse_device_name('T01_ABC-1234 - Juan'), ('T01', 'ABC-1234', 'Juan'))
+        # No unit in front, as in SABIGAN's exports.
+        self.assertEqual(sinotrack.parse_device_name('CCE 8051 - Sebigan'), ('', 'CCE 8051', 'Sebigan'))
 
     def test_rejects_other_csv(self):
         with self.assertRaisesMessage(sinotrack.ReportError, 'SinoTrack Travel Report'):
@@ -442,6 +444,22 @@ class ImportTests(WorkbookTestCase):
         legs = excel_log.load(path).find_driver('Gonzaga').legs
         self.assertEqual([minutes(leg.stay) for leg in legs], [10, 60, None])
         self.assertEqual([leg.long_stay for leg in legs], [False, True, False])
+
+    def test_sinotrack_spelling_becomes_the_plate_drivers_name(self):
+        # The log knows SABIGAN on CCE 8051; SinoTrack names the device "CCE 8051 - Sebigan" (no unit).
+        path = self.build([(dt.date(2026, 9, 30), 'SABIGAN', 'CCE 8051', 'A', T(8, 0), 'B', T(9, 0))],
+                          drivers=[('SABIGAN', '')], formula_rows=10)
+        trips = self.trips([('CCE 8051 - Sebigan', '2026-10-01 09:33:53', '2026-10-01 09:42:28', '5', 'X', 'Y')])
+        result = log_writer.import_trips(path, trips)
+        self.assertEqual((result.drivers, result.plates), (['SABIGAN'], ['CCE 8051']))
+        self.assertEqual(result.added_to_lists, ['plate CCE 8051'])  # no new driver
+        self.assertIn('The SinoTrack name "Sebigan" was recorded as SABIGAN', ' '.join(result.warnings))
+        self.assertEqual([d.name for d in excel_log.load(path).drivers], ['SABIGAN'])
+        # A name that is not alike stays, with a warning to check it.
+        trips = self.trips([('CCE 8051 - Juan', '2026-10-02 09:00:00', '2026-10-02 09:30:00', '5', 'X', 'Y')])
+        result = log_writer.import_trips(path, trips)
+        self.assertEqual(result.drivers, ['Juan'])
+        self.assertIn('CCE 8051 was driven by SABIGAN before', ' '.join(result.warnings))
 
     def test_reimport_skips_trips_already_in_the_log(self):
         path = self.build([], formula_rows=5)
