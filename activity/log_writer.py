@@ -17,6 +17,7 @@ cells are typed into the open workbook through Excel and Excel saves it; see exc
 """
 import bisect
 import datetime as dt
+import difflib
 import os
 import shutil
 from collections import OrderedDict, defaultdict
@@ -147,16 +148,68 @@ def _log_columns(snapshot, path, required):
 TRIP_COORDINATE_FIELDS = ('origin_coordinates', 'destination_coordinates')
 
 
+def _alike(a, b):
+    """Two spellings of one name, such as "Sebigan" and "SABIGAN"."""
+    return difflib.SequenceMatcher(None, a.casefold(), b.casefold()).ratio() >= 0.75
+
+
+class _DriverNames:
+    """Driver names already in the workbook (Lists sheet, then Activity Log) and who drove each plate
+    when, so a SinoTrack name is written the way the workbook spells that driver."""
+
+    def __init__(self, snapshot, cols):
+        self.known, self.by_plate, self.noted = {}, defaultdict(list), set()
+        lists_cols = excel_log.match_headers(snapshot.lists_header, excel_log.LISTS_HEADERS)
+        if 'driver' in lists_cols:
+            i = lists_cols['driver']
+            for values in snapshot.lists_rows:
+                name = excel_log.as_text(values[i] if i < len(values) else None)
+                if name:
+                    self.known.setdefault(name.casefold(), name)
+        for values in snapshot.log_rows:
+            def get(field_name):
+                i = cols.get(field_name)
+                return values[i] if i is not None and i < len(values) else None
+            name, date = excel_log.as_text(get('driver')), excel_log.to_date(get('date'))
+            if name and date is not None:
+                self.known.setdefault(name.casefold(), name)
+                self.by_plate[excel_log.as_text(get('plate')).casefold()].append((date, name))
+
+    def resolve(self, name, plate, date, result):
+        """The workbook's spelling of `name` ("Capoy" -> "CAPOY"). A name the workbook does not know
+        becomes the driver of that plate closest to `date` when the two look alike ("Sebigan" ->
+        "SABIGAN"); a different name is kept, with a warning to check it."""
+        if name.casefold() in self.known:
+            return self.known[name.casefold()]
+        nearby = self.by_plate.get((plate or '').casefold())
+        if not nearby:
+            return name
+        usual = min(nearby, key=lambda item: abs(item[0] - date))[1]
+        first_time = (name.casefold(), (plate or '').casefold()) not in self.noted
+        self.noted.add((name.casefold(), (plate or '').casefold()))
+        if _alike(name, usual):
+            if first_time:
+                result.warnings.append(f'The SinoTrack name "{name}" was recorded as {usual}, '
+                                       f'who drives {plate} in the Activity Log.')
+            return usual
+        if first_time:
+            result.warnings.append(f'{plate} was driven by {usual} before; this report names a new driver, '
+                                   f'"{name}". Check that this is right.')
+        return name
+
+
 def _plan_trips(snapshot, trips, driver, plate, path):
     cols = _log_columns(snapshot, path, excel_log.REQUIRED_LOG_FIELDS + ('plate',))
     existing, last_used = _existing_trips(snapshot.log_rows, cols)
+    names = _DriverNames(snapshot, cols)
 
     result = ImportResult()
     plan = Plan(result, input_cols=sorted(c + 1 for c in cols.values()), table_last=snapshot.table_last)
     filled = set()
     row = last_used + 1
     for trip in trips:
-        trip_driver, trip_plate = driver or trip.driver, plate or trip.plate
+        trip_plate = plate or trip.plate
+        trip_driver = driver or (trip.driver and names.resolve(trip.driver, trip_plate, trip.start.date(), result))
         if not trip_driver:
             raise ActivityLogError(
                 f'Cannot tell the driver from the device name "{trip.device}". '
@@ -239,13 +292,7 @@ def _plan_parks(snapshot, parks, plate, driver, path):
         return values[i] if i is not None and i < len(values) else None
 
     # Spellings of driver names already used, so a parking-only row says "CAPOY", not "Capoy".
-    known_drivers = {}
-    lists_cols = excel_log.match_headers(snapshot.lists_header, excel_log.LISTS_HEADERS)
-    if 'driver' in lists_cols:
-        for values in snapshot.lists_rows:
-            name = excel_log.as_text(values[lists_cols['driver']] if lists_cols['driver'] < len(values) else None)
-            if name:
-                known_drivers.setdefault(name.casefold(), name)
+    names = _DriverNames(snapshot, cols)
 
     legs_by_plate = defaultdict(list)
     parking_rows = {}                     # (date, plate) -> (row, values) of parking-only rows in the log
@@ -257,7 +304,6 @@ def _plan_parks(snapshot, parks, plate, driver, path):
         plate_key = excel_log.as_text(get(values, 'plate')).casefold()
         row_driver = excel_log.as_text(get(values, 'driver'))
         if row_driver:
-            known_drivers.setdefault(row_driver.casefold(), row_driver)
             drivers_by_plate[plate_key].append((date, row_driver))
         if depart is None:
             if all(excel_log.is_blank(get(values, n)) for n in ('arrive', 'origin', 'destination')):
@@ -312,7 +358,7 @@ def _plan_parks(snapshot, parks, plate, driver, path):
         if driver:
             return driver
         if park.driver:
-            return known_drivers.get(park.driver.casefold(), park.driver)
+            return names.resolve(park.driver, plate or park.plate, date, result)
         nearby = drivers_by_plate.get(key)
         if nearby:  # the device name has no driver: whoever drove this vehicle closest to that day
             return min(nearby, key=lambda item: abs(item[0] - date))[1]

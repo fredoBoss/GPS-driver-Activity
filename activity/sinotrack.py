@@ -43,6 +43,8 @@ DEVICE_NAME = re.compile(r'^(?P<unit>[^_\s]+)_(?P<plate>.+?)\s+-\s+(?P<driver>.+
 DEVICE_NAME_TIGHT_DASH = re.compile(r'^(?P<unit>[^_\s]+)_(?P<plate>[A-Za-z]{1,4}\s?\d{2,5})\s*-\s*(?P<driver>\S.*)$')
 # Some devices are named without the " - ": "T06_RLR 795 Capoy" (plate = letters, then digits).
 DEVICE_NAME_NO_DASH = re.compile(r'^(?P<unit>[^_\s]+)_(?P<plate>[A-Za-z]{1,4}\s?\d{2,5})\s+(?P<driver>\S.*)$')
+# Some have no unit in front: "CCE 8051 - Sebigan" -> plate "CCE 8051", driver "Sebigan".
+DEVICE_NAME_NO_UNIT = re.compile(r'^(?P<plate>[A-Za-z]{1,4}\s?\d{2,5})\s*-\s*(?P<driver>\S.*)$')
 
 
 class ReportError(Exception):
@@ -114,10 +116,11 @@ def lat_lon(latitude, longitude):
 
 def parse_device_name(name):
     """Split a SinoTrack device name into (unit, plate, driver); unparsed names become the plate."""
-    match = DEVICE_NAME.match(name) or DEVICE_NAME_TIGHT_DASH.match(name) or DEVICE_NAME_NO_DASH.match(name)
+    match = (DEVICE_NAME.match(name) or DEVICE_NAME_TIGHT_DASH.match(name) or DEVICE_NAME_NO_DASH.match(name)
+             or DEVICE_NAME_NO_UNIT.match(name))
     if not match:
         return '', name, ''
-    return match['unit'], match['plate'].strip(), match['driver'].strip()
+    return match.groupdict().get('unit') or '', match['plate'].strip(), match['driver'].strip()
 
 
 def detect_report(data):
